@@ -16,6 +16,7 @@ try {
     aggregateDailyRows,
     buildDailyProduction,
     buildDailyTotalizerRows,
+    buildMonthlyChemicalUsage,
     buildMonthlyProduction,
     buildMonthlyPowerConsumption,
     startOfMonthlyProductionSourceIso,
@@ -136,6 +137,28 @@ try {
   assert.equal(powerConsumption.rows[0].deepwellPower, 250);
   assert.equal(powerConsumption.rows[0].totalPower, 350);
   assert.equal(powerConsumption.totalPower, 350);
+
+  const chemicalUsage = buildMonthlyChemicalUsage(
+    [
+      { slot_datetime: '2026-02-01T08:00:00.000Z', chlorine_consumed: 4, peroxide_consumption: 1.5 },
+      { slot_datetime: '2026-02-01T16:00:00.000Z', chlorine_consumed: 5, peroxide_consumption: 1.25 },
+      { slot_datetime: '2026-02-02T16:00:00.000Z', chlorine_consumed: 6, peroxide_consumption: 2 },
+    ],
+    {
+      now: new Date('2026-02-28T12:00:00.000Z'),
+      monthCount: 2,
+    }
+  );
+
+  assert.deepEqual(
+    chemicalUsage.rows.map((row) => row.key),
+    ['2026-02', '2026-01']
+  );
+  assert.equal(chemicalUsage.rows[0].chlorineUsage, 15);
+  assert.equal(chemicalUsage.rows[0].peroxideUsage, 4.75);
+  assert.equal(chemicalUsage.rows[0].totalUsage, 19.75);
+  assert.equal(chemicalUsage.totalChlorine, 15);
+  assert.equal(chemicalUsage.totalPeroxide, 4.75);
 
   assert.equal(
     startOfMonthlyProductionSourceIso({

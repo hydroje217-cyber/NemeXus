@@ -428,6 +428,230 @@ function MonthlyPowerConsumptionCard({ monthlyPowerConsumption, palette, isDark,
   );
 }
 
+function MonthlyChemicalUsageCard({ monthlyChemicalUsage, palette, isDark, isWide, screenWidth, styles, cardStyle }) {
+  const rows = monthlyChemicalUsage?.rows ?? [];
+  const [zoomLevel, setZoomLevel] = useState(1);
+  const chlorineColor = isDark ? '#34BFA3' : '#0F8F7C';
+  const peroxideColor = isDark ? '#F6C85F' : '#E7A321';
+  const totalChlorine =
+    monthlyChemicalUsage?.totalChlorine ??
+    rows.reduce((sum, row) => sum + (Number(row.chlorineUsage) || 0), 0);
+  const totalPeroxide =
+    monthlyChemicalUsage?.totalPeroxide ??
+    rows.reduce((sum, row) => sum + (Number(row.peroxideUsage) || 0), 0);
+  const maxUsage = Math.max(
+    ...rows.map((row) => Math.max(row.chlorineUsage || 0, row.peroxideUsage || 0)),
+    1
+  );
+  const chartHeight = isWide ? 210 : 190;
+  const baseBarWidth = isWide ? 30 : 26;
+  const baseSpacing = isWide ? 34 : 28;
+  const barWidth = Math.round(baseBarWidth * zoomLevel);
+  const spacing = Math.round(baseSpacing * zoomLevel);
+  const rawViewportWidth = Math.max(280, screenWidth - (isWide ? 120 : 72));
+  const baseContentWidth = Math.max(rows.length * (baseBarWidth + baseSpacing) + 90, isWide ? 820 : 560);
+  const chartViewportWidth = Math.min(rawViewportWidth, Math.max(280, baseContentWidth - 120));
+  const chartMaxValue = maxUsage <= 0 ? 1 : Math.ceil(maxUsage * 1.22);
+  const hasData = rows.some((row) => row.totalUsage > 0);
+  const zoomPercent = Math.round(zoomLevel * 100);
+  const canZoomOut = zoomLevel > MIN_CHART_ZOOM;
+  const canZoomIn = zoomLevel < MAX_CHART_ZOOM;
+  const valueLabelWidth = Math.round(Math.max(44, Math.min(64, barWidth + 32)));
+  const valueLabelFontSize = zoomLevel >= 1.35 ? 8 : 7;
+  const valueLabelContainerStyle = {
+    width: valueLabelWidth,
+    height: 18,
+    left: (barWidth - valueLabelWidth) / 2,
+    justifyContent: 'center',
+    alignItems: 'center',
+  };
+  const renderChemicalValueLabel = (value) =>
+    value > 0 ? (
+      <View style={styles.chartPlainValueWrap}>
+        <Text numberOfLines={1} adjustsFontSizeToFit style={[styles.chartPlainValueText, { fontSize: valueLabelFontSize }]}>
+          {formatNumber(value, 2)}
+        </Text>
+      </View>
+    ) : null;
+  const updateZoom = (change) => {
+    setZoomLevel((currentZoom) => {
+      const nextZoom = currentZoom + change;
+      return Math.min(MAX_CHART_ZOOM, Math.max(MIN_CHART_ZOOM, Number(nextZoom.toFixed(2))));
+    });
+  };
+  const createChemicalChartData = ({ field, color, gradientColor }) =>
+    rows.map((row) => {
+      const value = Math.max(0, row[field] || 0);
+
+      return {
+        value,
+        label: row.label,
+        frontColor: color,
+        gradientColor,
+        topLabelContainerStyle: valueLabelContainerStyle,
+        topLabelComponent: () => renderChemicalValueLabel(value),
+      };
+    });
+  const chlorineChartData = createChemicalChartData({
+    field: 'chlorineUsage',
+    color: chlorineColor,
+    gradientColor: isDark ? '#62D7C1' : '#3BC4AA',
+  });
+  const peroxideChartData = createChemicalChartData({
+    field: 'peroxideUsage',
+    color: peroxideColor,
+    gradientColor: isDark ? '#FFE18A' : '#F8C34F',
+  });
+  const renderChemicalChart = ({ title, iconName, iconColor, data, legendStyle, legendLabel, emptyMessage }) => (
+    <View style={styles.chemicalChartPanel}>
+      <View style={styles.chemicalChartTitleRow}>
+        <View style={styles.chemicalChartTitleWrap}>
+          <Ionicons name={iconName} size={14} color={iconColor} />
+          <Text style={styles.chemicalChartTitle}>{title}</Text>
+        </View>
+        <View style={styles.productionLegendItem}>
+          <View style={[styles.productionLegendSwatch, legendStyle]} />
+          <Text style={styles.productionLegendText}>{legendLabel}</Text>
+        </View>
+      </View>
+
+      <View style={[styles.productionChart, styles.chemicalUsageChart]}>
+        <BarChart
+          data={data}
+          width={chartViewportWidth}
+          height={chartHeight}
+          barWidth={barWidth}
+          spacing={spacing}
+          initialSpacing={18}
+          endSpacing={18}
+          maxValue={chartMaxValue}
+          noOfSections={4}
+          showGradient
+          roundedTop
+          roundedBottom={false}
+          isAnimated
+          animationDuration={800}
+          xAxisColor={palette.lineStrong}
+          yAxisColor={palette.lineStrong}
+          rulesColor={palette.line}
+          rulesThickness={1}
+          yAxisTextStyle={styles.chartAxisLabel}
+          xAxisLabelTextStyle={styles.chartMonthLabel}
+          yAxisLabelWidth={58}
+          xAxisTextNumberOfLines={1}
+          labelsExtraHeight={28}
+          formatYLabel={(value) => formatNumber(value, 0)}
+          disableScroll={false}
+          nestedScrollEnabled
+          showScrollIndicator
+          indicatorColor={isDark ? 'white' : 'black'}
+          disablePress
+        />
+      </View>
+
+      {!data.some((item) => item.value > 0) ? (
+        <MessageBanner tone="info">{emptyMessage}</MessageBanner>
+      ) : null}
+    </View>
+  );
+
+  return (
+    <Card style={[styles.panelCard, cardStyle]}>
+      <SectionHeader
+        title="Monthly Chemical Usage"
+        iconName="flask-outline"
+        iconColor={palette.teal600}
+        styles={styles}
+      />
+
+      <View style={[styles.chartMetaRow, !isWide && styles.chartMetaRowCompact]}>
+        <View style={[styles.productionSummaryPill, isWide && styles.productionSummaryPillWide]}>
+          <View style={styles.productionSummaryAccent} />
+          <View style={styles.productionSummaryIcon}>
+            <Ionicons name="flask-outline" size={15} color={palette.teal600} />
+          </View>
+          <View style={styles.productionSummaryCopy}>
+            <Text style={styles.productionSummaryLabel}>Chemical Usage</Text>
+            <Text numberOfLines={1} adjustsFontSizeToFit style={styles.productionSummaryValue}>
+              {formatNumber(totalChlorine + totalPeroxide)}
+            </Text>
+            <Text style={styles.productionSummaryHint}>
+              Cl {formatNumber(totalChlorine)} / H2O2 {formatNumber(totalPeroxide)}
+            </Text>
+          </View>
+        </View>
+
+        <View style={[styles.chartToolbar, !isWide && styles.chartToolbarCompact]}>
+          <Text style={styles.chartToolbarLabel}>Zoom</Text>
+          <View style={styles.zoomControls}>
+            <Pressable
+              onPress={() => updateZoom(-CHART_ZOOM_STEP)}
+              disabled={!canZoomOut}
+              accessibilityLabel="Zoom out chemical usage chart"
+              style={({ pressed }) => [
+                styles.zoomButton,
+                pressed && canZoomOut ? styles.pressed : null,
+                !canZoomOut ? styles.zoomButtonDisabled : null,
+              ]}
+            >
+              <Ionicons name="remove" size={15} color={palette.ink900} />
+            </Pressable>
+            <Pressable
+              onPress={() => setZoomLevel(1)}
+              disabled={zoomLevel === 1}
+              accessibilityLabel="Reset chemical usage chart zoom"
+              style={({ pressed }) => [
+                styles.zoomValueButton,
+                pressed && zoomLevel !== 1 ? styles.pressed : null,
+                zoomLevel === 1 ? styles.zoomValueButtonDisabled : null,
+              ]}
+            >
+              <Ionicons name="resize-outline" size={14} color={palette.ink900} />
+              <Text style={styles.zoomValueText}>{zoomPercent}%</Text>
+            </Pressable>
+            <Pressable
+              onPress={() => updateZoom(CHART_ZOOM_STEP)}
+              disabled={!canZoomIn}
+              accessibilityLabel="Zoom in chemical usage chart"
+              style={({ pressed }) => [
+                styles.zoomButton,
+                pressed && canZoomIn ? styles.pressed : null,
+                !canZoomIn ? styles.zoomButtonDisabled : null,
+              ]}
+            >
+              <Ionicons name="add" size={15} color={palette.ink900} />
+            </Pressable>
+          </View>
+        </View>
+      </View>
+
+      {renderChemicalChart({
+        title: 'Chlorine Usage',
+        iconName: 'water-outline',
+        iconColor: chlorineColor,
+        data: chlorineChartData,
+        legendStyle: styles.chemicalLegendChlorine,
+        legendLabel: 'Chlorine',
+        emptyMessage: 'Chlorine usage will appear here after chlorine values are saved.',
+      })}
+
+      {renderChemicalChart({
+        title: 'Peroxide Usage',
+        iconName: 'flask-outline',
+        iconColor: peroxideColor,
+        data: peroxideChartData,
+        legendStyle: styles.chemicalLegendPeroxide,
+        legendLabel: 'Peroxide',
+        emptyMessage: 'Peroxide usage will appear here after peroxide values are saved.',
+      })}
+
+      {!hasData ? (
+        <MessageBanner tone="info">Monthly chemical usage will appear here after chlorine and peroxide values are saved.</MessageBanner>
+      ) : null}
+    </Card>
+  );
+}
+
 function DailyProductionCard({ dailyProduction, palette, isDark, isWide, screenWidth, styles, cardStyle }) {
   const rows = dailyProduction?.rows ?? [];
   const [zoomLevel, setZoomLevel] = useState(1);
@@ -621,6 +845,11 @@ export default function OfficeGraphsScreen({ navigation }) {
     totalPower: 0,
     rows: [],
   });
+  const [monthlyChemicalUsage, setMonthlyChemicalUsage] = useState({
+    totalChlorine: 0,
+    totalPeroxide: 0,
+    rows: [],
+  });
   const [dailyProduction, setDailyProduction] = useState({
     monthLabel: '',
     totalProduction: 0,
@@ -639,6 +868,7 @@ export default function OfficeGraphsScreen({ navigation }) {
       const snapshot = await getOfficeDashboardSnapshot();
       setMonthlyProduction(snapshot.monthlyProduction);
       setDailyProduction(snapshot.dailyProduction || { monthLabel: '', totalProduction: 0, rows: [] });
+      setMonthlyChemicalUsage(snapshot.monthlyChemicalUsage || { totalChlorine: 0, totalPeroxide: 0, rows: [] });
       setMonthlyPowerConsumption(snapshot.monthlyPowerConsumption || { totalPower: 0, rows: [] });
       setTone('success');
       setMessage('Dashboard graphs are synced with the live database.');
@@ -697,15 +927,6 @@ export default function OfficeGraphsScreen({ navigation }) {
         </View>
       ) : (
         <View style={styles.chartGrid}>
-          <MonthlyPowerConsumptionCard
-            monthlyPowerConsumption={monthlyPowerConsumption}
-            palette={palette}
-            isDark={isDark}
-            isWide={isWide}
-            screenWidth={chartCardWidth}
-            styles={styles}
-            cardStyle={useTwoColumnCharts ? styles.chartGridCard : null}
-          />
           <MonthlyProductionCard
             monthlyProduction={monthlyProduction}
             palette={palette}
@@ -717,6 +938,24 @@ export default function OfficeGraphsScreen({ navigation }) {
           />
           <DailyProductionCard
             dailyProduction={dailyProduction}
+            palette={palette}
+            isDark={isDark}
+            isWide={isWide}
+            screenWidth={chartCardWidth}
+            styles={styles}
+            cardStyle={useTwoColumnCharts ? styles.chartGridCard : null}
+          />
+          <MonthlyChemicalUsageCard
+            monthlyChemicalUsage={monthlyChemicalUsage}
+            palette={palette}
+            isDark={isDark}
+            isWide={isWide}
+            screenWidth={chartCardWidth}
+            styles={styles}
+            cardStyle={useTwoColumnCharts ? styles.chartGridCard : null}
+          />
+          <MonthlyPowerConsumptionCard
+            monthlyPowerConsumption={monthlyPowerConsumption}
             palette={palette}
             isDark={isDark}
             isWide={isWide}
@@ -997,6 +1236,29 @@ function createStyles(palette, isDark) {
       paddingTop: 22,
       paddingBottom: 10,
     },
+    chemicalChartPanel: {
+      gap: 8,
+    },
+    chemicalChartTitleRow: {
+      flexDirection: 'row',
+      flexWrap: 'wrap',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      gap: 8,
+    },
+    chemicalChartTitleWrap: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 6,
+    },
+    chemicalChartTitle: {
+      color: palette.ink900,
+      fontSize: 13,
+      fontWeight: '900',
+    },
+    chemicalUsageChart: {
+      minHeight: 258,
+    },
     chartAxisLabel: {
       color: palette.ink500,
       fontSize: 9,
@@ -1072,6 +1334,12 @@ function createStyles(palette, isDark) {
     },
     powerLegendDeepwell: {
       backgroundColor: palette.amber500,
+    },
+    chemicalLegendChlorine: {
+      backgroundColor: isDark ? '#34BFA3' : '#0F8F7C',
+    },
+    chemicalLegendPeroxide: {
+      backgroundColor: isDark ? '#F6C85F' : '#E7A321',
     },
     productionLegendText: {
       color: palette.ink700,

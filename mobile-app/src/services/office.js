@@ -1,6 +1,7 @@
 import { supabase } from '../lib/supabase';
 import {
   buildDailyProduction,
+  buildMonthlyChemicalUsage,
   buildMonthlyProduction,
   buildMonthlyPowerConsumption,
   startOfMonthlyProductionSourceIso,
@@ -98,7 +99,7 @@ export async function getOfficeDashboardSnapshot({ limit = 12 } = {}) {
       .limit(20),
     supabase
       .from('chlorination_readings')
-      .select('id, site_id, status, created_at, reading_datetime, slot_datetime, totalizer, chlorination_power_kwh')
+      .select('id, site_id, status, created_at, reading_datetime, slot_datetime, totalizer, chlorine_consumed, peroxide_consumption, chlorination_power_kwh')
       .gte('reading_datetime', startOfMonthlyProductionSourceIso())
       .order('reading_datetime', { ascending: true }),
     supabase
@@ -140,6 +141,7 @@ export async function getOfficeDashboardSnapshot({ limit = 12 } = {}) {
     profiles: profilesResult.data ?? [],
     monthlyProduction: buildMonthlyProduction(monthlyChlorinationReadingsResult.data ?? []),
     dailyProduction: buildDailyProduction(monthlyChlorinationReadingsResult.data ?? []),
+    monthlyChemicalUsage: buildMonthlyChemicalUsage(monthlyChlorinationReadingsResult.data ?? []),
     monthlyPowerConsumption: buildMonthlyPowerConsumption({
       chlorinationReadings: monthlyChlorinationReadingsResult.data ?? [],
       deepwellReadings: monthlyDeepwellReadingsResult.data ?? [],
