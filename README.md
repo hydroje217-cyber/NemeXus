@@ -45,3 +45,5 @@ Database schema and setup notes remain with the mobile app:
 - `mobile-app/supabase/`
 
 Both apps should use the public Supabase URL and anon/publishable key. Do not place a service role key in either client app.
+
+To preview the dashboard with fuller fake data, run `mobile-app/supabase/reset-dashboard-data.sql` and then `mobile-app/supabase/seed-dashboard-demo-data.sql` in the Supabase SQL editor after creating at least one user account.

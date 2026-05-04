@@ -38,22 +38,6 @@ const MIN_CHART_ZOOM = 0.75;
 const MAX_CHART_ZOOM = 2;
 const CHART_ZOOM_STEP = 0.25;
 
-function MetricCard({ label, value, detail, iconName, palette, styles }) {
-  return (
-    <Card style={styles.metricCard}>
-      <View style={styles.metricHeader}>
-        <View style={styles.metricIconWrap}>
-          <Ionicons name={iconName} size={15} color={palette.teal600} />
-        </View>
-        <Text style={styles.metricLabel}>{label}</Text>
-      </View>
-      <Text numberOfLines={1} adjustsFontSizeToFit style={styles.metricValue}>
-        {value}
-      </Text>
-      {detail ? <Text style={styles.metricDetail}>{detail}</Text> : null}
-    </Card>
-  );
-}
 function MonthlyProductionCard({ monthlyProduction, palette, isDark, isWide, screenWidth, styles, cardStyle }) {
   const rows = monthlyProduction?.rows ?? [];
   const [zoomLevel, setZoomLevel] = useState(1);
@@ -628,14 +612,6 @@ export default function OfficeGraphsScreen({ navigation }) {
   const isWide = width >= 980;
   const useTwoColumnCharts = width >= 980;
   const chartCardWidth = useTwoColumnCharts ? Math.floor((width - 44) / 2) : width;
-  const [stats, setStats] = useState({
-    totalOperators: 0,
-    approvedOperators: 0,
-    pendingOperators: 0,
-    totalSites: 0,
-    todayReadings: 0,
-  });
-  const [recentReadings, setRecentReadings] = useState([]);
   const [monthlyProduction, setMonthlyProduction] = useState({
     totalProduction: 0,
     averageProduction: 0,
@@ -654,31 +630,6 @@ export default function OfficeGraphsScreen({ navigation }) {
   const [message, setMessage] = useState('');
   const [tone, setTone] = useState('info');
 
-  const analyticsSummary = useMemo(() => {
-    const monthlyRows = monthlyProduction?.rows ?? [];
-    const powerRows = monthlyPowerConsumption?.rows ?? [];
-    const dailyRows = dailyProduction?.rows ?? [];
-    const activeDailyRows = dailyRows.filter((row) => Number(row.production) > 0);
-    const latestProduction = monthlyRows[0]?.production ?? 0;
-    const previousProduction = monthlyRows[1]?.production ?? 0;
-    const latestPower = powerRows[0]?.totalPower ?? 0;
-    const previousPower = powerRows[1]?.totalPower ?? 0;
-    const peakDailyProduction = Math.max(...dailyRows.map((row) => Number(row.production) || 0), 0);
-
-    return {
-      latestProduction,
-      previousProduction,
-      latestPower,
-      previousPower,
-      peakDailyProduction,
-      activeProductionDays: activeDailyRows.length,
-      totalProduction: monthlyProduction?.totalProduction ?? 0,
-      averageProduction: monthlyProduction?.averageProduction ?? 0,
-      totalPower: monthlyPowerConsumption?.totalPower ?? 0,
-      currentMonthProduction: dailyProduction?.totalProduction ?? 0,
-    };
-  }, [dailyProduction, monthlyPowerConsumption, monthlyProduction]);
-
   async function loadGraphs({ silent = false } = {}) {
     if (!silent) {
       setLoading(true);
@@ -686,14 +637,6 @@ export default function OfficeGraphsScreen({ navigation }) {
 
     try {
       const snapshot = await getOfficeDashboardSnapshot();
-      setStats(snapshot.stats || {
-        totalOperators: 0,
-        approvedOperators: 0,
-        pendingOperators: 0,
-        totalSites: 0,
-        todayReadings: 0,
-      });
-      setRecentReadings(snapshot.recentReadings || []);
       setMonthlyProduction(snapshot.monthlyProduction);
       setDailyProduction(snapshot.dailyProduction || { monthLabel: '', totalProduction: 0, rows: [] });
       setMonthlyPowerConsumption(snapshot.monthlyPowerConsumption || { totalPower: 0, rows: [] });
@@ -753,72 +696,35 @@ export default function OfficeGraphsScreen({ navigation }) {
           <ActivityIndicator size="large" color={palette.teal600} />
         </View>
       ) : (
-        <>
-          <View style={[styles.metricGrid, isWide && styles.metricGridWide]}>
-            <MetricCard
-              label="10-month production"
-              value={formatNumber(analyticsSummary.totalProduction)}
-              detail={`Avg ${formatNumber(analyticsSummary.averageProduction)}`}
-              iconName="analytics-outline"
-              palette={palette}
-              styles={styles}
-            />
-            <MetricCard
-              label="10-month power"
-              value={formatNumber(analyticsSummary.totalPower)}
-              detail={`Latest ${formatNumber(analyticsSummary.latestPower)}`}
-              iconName="flash-outline"
-              palette={palette}
-              styles={styles}
-            />
-            <MetricCard
-              label="Current month"
-              value={formatNumber(analyticsSummary.currentMonthProduction)}
-              detail={`${analyticsSummary.activeProductionDays} active day(s)`}
-              iconName="calendar-outline"
-              palette={palette}
-              styles={styles}
-            />
-            <MetricCard
-              label="Readings today"
-              value={stats.todayReadings}
-              detail={`${recentReadings.length} recent item(s) loaded`}
-              iconName="reader-outline"
-              palette={palette}
-              styles={styles}
-            />
-          </View>
-
-          <View style={styles.chartGrid}>
-            <MonthlyPowerConsumptionCard
-              monthlyPowerConsumption={monthlyPowerConsumption}
-              palette={palette}
-              isDark={isDark}
-              isWide={isWide}
-              screenWidth={chartCardWidth}
-              styles={styles}
-              cardStyle={useTwoColumnCharts ? styles.chartGridCard : null}
-            />
-            <MonthlyProductionCard
-              monthlyProduction={monthlyProduction}
-              palette={palette}
-              isDark={isDark}
-              isWide={isWide}
-              screenWidth={chartCardWidth}
-              styles={styles}
-              cardStyle={useTwoColumnCharts ? styles.chartGridCard : null}
-            />
-            <DailyProductionCard
-              dailyProduction={dailyProduction}
-              palette={palette}
-              isDark={isDark}
-              isWide={isWide}
-              screenWidth={chartCardWidth}
-              styles={styles}
-              cardStyle={useTwoColumnCharts ? styles.chartGridCard : null}
-            />
-          </View>
-        </>
+        <View style={styles.chartGrid}>
+          <MonthlyPowerConsumptionCard
+            monthlyPowerConsumption={monthlyPowerConsumption}
+            palette={palette}
+            isDark={isDark}
+            isWide={isWide}
+            screenWidth={chartCardWidth}
+            styles={styles}
+            cardStyle={useTwoColumnCharts ? styles.chartGridCard : null}
+          />
+          <MonthlyProductionCard
+            monthlyProduction={monthlyProduction}
+            palette={palette}
+            isDark={isDark}
+            isWide={isWide}
+            screenWidth={chartCardWidth}
+            styles={styles}
+            cardStyle={useTwoColumnCharts ? styles.chartGridCard : null}
+          />
+          <DailyProductionCard
+            dailyProduction={dailyProduction}
+            palette={palette}
+            isDark={isDark}
+            isWide={isWide}
+            screenWidth={chartCardWidth}
+            styles={styles}
+            cardStyle={useTwoColumnCharts ? styles.chartGridCard : null}
+          />
+        </View>
       )}
     </ScreenShell>
   );
@@ -881,56 +787,6 @@ function createStyles(palette, isDark) {
       alignItems: 'center',
       justifyContent: 'center',
       paddingVertical: 40,
-    },
-    metricGrid: {
-      gap: 8,
-    },
-    metricGridWide: {
-      flexDirection: 'row',
-      alignItems: 'stretch',
-    },
-    metricCard: {
-      flex: 1,
-      minWidth: 0,
-      gap: 8,
-      padding: 12,
-      borderRadius: 8,
-      borderWidth: 1,
-      borderColor: isDark ? '#27445E' : '#D8E6F5',
-      backgroundColor: isDark ? '#0F1F2F' : '#FBFDFF',
-    },
-    metricHeader: {
-      flexDirection: 'row',
-      alignItems: 'center',
-      gap: 7,
-    },
-    metricIconWrap: {
-      width: 28,
-      height: 28,
-      borderRadius: 8,
-      alignItems: 'center',
-      justifyContent: 'center',
-      borderWidth: 1,
-      borderColor: isDark ? '#1A655E' : '#B4E5DE',
-      backgroundColor: isDark ? '#11312D' : '#E5F5F3',
-    },
-    metricLabel: {
-      flex: 1,
-      color: palette.ink700,
-      fontSize: 10,
-      fontWeight: '900',
-      textTransform: 'uppercase',
-    },
-    metricValue: {
-      color: isDark ? palette.ink900 : palette.navy900,
-      fontSize: 22,
-      lineHeight: 26,
-      fontWeight: '900',
-    },
-    metricDetail: {
-      color: palette.ink500,
-      fontSize: 10,
-      fontWeight: '800',
     },
     chartGrid: {
       flexDirection: 'row',

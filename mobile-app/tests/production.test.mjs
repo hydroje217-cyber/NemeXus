@@ -62,6 +62,26 @@ try {
 
   assert.deepEqual(noPreviousRows, [{ date: '2026-02-01', totalizer: null }]);
 
+  const multiSiteRows = buildDailyTotalizerRows(
+    [
+      { site_id: 1, slot_datetime: '2026-01-31T23:30:00.000Z', totalizer: 1000 },
+      { site_id: 2, slot_datetime: '2026-01-31T23:30:00.000Z', totalizer: 5000 },
+      { site_id: 1, slot_datetime: '2026-02-01T23:30:00.000Z', totalizer: 1120 },
+      { site_id: 2, slot_datetime: '2026-02-01T23:30:00.000Z', totalizer: 5160 },
+      { site_id: 1, slot_datetime: '2026-02-02T23:30:00.000Z', totalizer: 1240 },
+      { site_id: 2, slot_datetime: '2026-02-02T23:30:00.000Z', totalizer: 90 },
+    ],
+    {
+      visibleFromDate: '2026-02-01',
+      visibleToDate: '2026-02-02',
+    }
+  );
+
+  assert.deepEqual(multiSiteRows, [
+    { date: '2026-02-01', totalizer: 280 },
+    { date: '2026-02-02', totalizer: 120 },
+  ]);
+
   const monthlyProduction = buildMonthlyProduction(readings, {
     now: new Date('2026-02-28T12:00:00.000Z'),
     monthCount: 2,
@@ -93,15 +113,13 @@ try {
   const powerConsumption = buildMonthlyPowerConsumption(
     {
       chlorinationReadings: [
-        { slot_datetime: '2026-01-31T23:30:00.000Z', chlorination_power_kwh: 1000 },
-        { slot_datetime: '2026-02-01T23:30:00.000Z', chlorination_power_kwh: 1040 },
-        { slot_datetime: '2026-02-02T23:30:00.000Z', chlorination_power_kwh: 1100 },
+        { slot_datetime: '2026-02-01T23:30:00.000Z', chlorination_power_kwh: 40 },
+        { slot_datetime: '2026-02-02T23:30:00.000Z', chlorination_power_kwh: 60 },
       ],
       deepwellReadings: [
-        { slot_datetime: '2026-01-31T23:30:00.000Z', power_kwh_shift: 5000 },
-        { slot_datetime: '2026-02-01T08:00:00.000Z', power_kwh_shift: 5050 },
-        { slot_datetime: '2026-02-01T18:00:00.000Z', power_kwh_shift: 5100 },
-        { slot_datetime: '2026-02-02T18:00:00.000Z', power_kwh_shift: 5250 },
+        { slot_datetime: '2026-02-01T08:00:00.000Z', power_kwh_shift: 50 },
+        { slot_datetime: '2026-02-01T18:00:00.000Z', power_kwh_shift: 50 },
+        { slot_datetime: '2026-02-02T18:00:00.000Z', power_kwh_shift: 150 },
       ],
     },
     {

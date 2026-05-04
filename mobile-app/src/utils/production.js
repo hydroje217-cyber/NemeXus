@@ -68,6 +68,13 @@ export function averageForField(items, field) {
   return total / values.length;
 }
 
+export function sumForField(items, field) {
+  return items
+    .map((item) => parseProductionNumber(item[field]))
+    .filter((value) => value !== null)
+    .reduce((sum, value) => sum + value, 0);
+}
+
 export function lastNumericValueForDay(items, field) {
   const values = items
     .map((item) => ({
@@ -84,6 +91,20 @@ export function lastNumericValueForDay(items, field) {
   return values[values.length - 1].value;
 }
 
+export function readingGroupKey(item) {
+  return String(item?.site_id || item?.site?.id || item?.sites?.id || 'default');
+}
+
+function groupRowsByReadingGroup(items) {
+  return items.reduce((map, item) => {
+    const key = readingGroupKey(item);
+    const current = map.get(key) || [];
+    current.push(item);
+    map.set(key, current);
+    return map;
+  }, new Map());
+}
+
 export function previousDayDifference(date, lastValueByDate) {
   const currentValue = lastValueByDate.get(date);
   const previousValue = lastValueByDate.get(previousDayKey(date));
@@ -93,6 +114,36 @@ export function previousDayDifference(date, lastValueByDate) {
   }
 
   return currentValue - previousValue;
+}
+
+export function previousDayDifferenceByGroup(date, lastValueByDateAndGroup) {
+  const currentGroups = lastValueByDateAndGroup.get(date);
+  const previousGroups = lastValueByDateAndGroup.get(previousDayKey(date));
+
+  if (!currentGroups || !previousGroups) {
+    return null;
+  }
+
+  let total = 0;
+  let count = 0;
+
+  currentGroups.forEach((currentValue, groupKey) => {
+    const previousValue = previousGroups.get(groupKey);
+
+    if (currentValue === null || currentValue === undefined || previousValue === null || previousValue === undefined) {
+      return;
+    }
+
+    const difference = currentValue - previousValue;
+    if (difference < 0) {
+      return;
+    }
+
+    total += difference;
+    count += 1;
+  });
+
+  return count ? total : null;
 }
 
 export function groupReadingsByDay(items) {
@@ -116,7 +167,15 @@ export function aggregateDailyRows(items, fieldConfigs, options = {}) {
   const previousDayDifferenceMaps = fieldConfigs.reduce((maps, config) => {
     if (config.aggregate === 'previousDayDifference') {
       maps[config.key] = new Map(
-        sortedEntries.map(([date, rows]) => [date, lastNumericValueForDay(rows, config.field)])
+        sortedEntries.map(([date, rows]) => [
+          date,
+          new Map(
+            Array.from(groupRowsByReadingGroup(rows).entries()).map(([groupKey, groupRows]) => [
+              groupKey,
+              lastNumericValueForDay(groupRows, config.field),
+            ])
+          ),
+        ])
       );
     }
 
@@ -142,10 +201,17 @@ export function aggregateDailyRows(items, fieldConfigs, options = {}) {
       };
 
       fieldConfigs.forEach((config) => {
-        result[config.key] =
-          config.aggregate === 'previousDayDifference'
-            ? previousDayDifference(date, previousDayDifferenceMaps[config.key])
-            : averageForField(rows, config.field);
+        if (config.aggregate === 'previousDayDifference') {
+          result[config.key] = previousDayDifferenceByGroup(date, previousDayDifferenceMaps[config.key]);
+          return;
+        }
+
+        if (config.aggregate === 'sum') {
+          result[config.key] = sumForField(rows, config.field);
+          return;
+        }
+
+        result[config.key] = averageForField(rows, config.field);
       });
 
       return result;
@@ -303,12 +369,12 @@ export function buildMonthlyPowerConsumption({ chlorinationReadings = [], deepwe
   const visibleToDate = createDayKey(now);
   const chlorinationRows = aggregateDailyRows(
     chlorinationReadings,
-    [{ key: 'power', field: 'chlorination_power_kwh', aggregate: 'previousDayDifference' }],
+    [{ key: 'power', field: 'chlorination_power_kwh', aggregate: 'sum' }],
     { visibleFromDate, visibleToDate }
   );
   const deepwellRows = aggregateDailyRows(
     deepwellReadings,
-    [{ key: 'power', field: 'power_kwh_shift', aggregate: 'previousDayDifference' }],
+    [{ key: 'power', field: 'power_kwh_shift', aggregate: 'sum' }],
     { visibleFromDate, visibleToDate }
   );
 
