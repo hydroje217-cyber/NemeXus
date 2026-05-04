@@ -73,16 +73,25 @@ function ChartPanel({ title, icon: Icon, summaryLabel, summaryValue, summaryHint
           </span>
           <h3>{title}</h3>
         </div>
-        <div className="summary-pill">
-          <strong>{summaryValue}</strong>
+      </header>
+      <div className="summary-pill">
+        <span className="summary-icon">
+          <Icon size={18} />
+        </span>
+        <div>
           <span>{summaryLabel}</span>
+          <strong>{summaryValue}</strong>
           {summaryHint ? <small>{summaryHint}</small> : null}
         </div>
-        <ZoomControls zoomLevel={zoomLevel} onZoomIn={onZoomIn} onZoomOut={onZoomOut} onReset={onReset} />
-      </header>
+      </div>
+      <ZoomControls zoomLevel={zoomLevel} onZoomIn={onZoomIn} onZoomOut={onZoomOut} onReset={onReset} />
       {children}
     </section>
   );
+}
+
+function SegmentLabel({ value, tone }) {
+  return value > 0 ? <span className={`stack-label ${tone}`}>{formatNumber(value)}</span> : null;
 }
 
 function chartScaleStyle(zoomLevel, daily = false) {
@@ -151,8 +160,12 @@ function StackedPowerChart({ rows, zoomLevel, daily = false }) {
               <span className="bar-value">{totalPower > 0 ? formatNumber(totalPower) : ''}</span>
               <div className="bar-track">
                 <span className="stack-fill" style={{ height: `${totalHeight}%` }}>
-                  <span className="stack-segment chlorination" style={{ height: `${chlorinationShare}%` }} />
-                  <span className="stack-segment deepwell" style={{ height: `${deepwellShare}%` }} />
+                  <span className="stack-segment chlorination" style={{ height: `${chlorinationShare}%` }}>
+                    <SegmentLabel value={chlorinationPower} tone="light" />
+                  </span>
+                  <span className="stack-segment deepwell" style={{ height: `${deepwellShare}%` }}>
+                    <SegmentLabel value={deepwellPower} tone="dark" />
+                  </span>
                 </span>
               </div>
               <span className="bar-label">{row.label}</span>
