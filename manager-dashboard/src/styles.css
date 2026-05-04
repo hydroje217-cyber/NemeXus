@@ -333,6 +333,7 @@ select {
   display: flex;
   justify-content: space-between;
   align-items: stretch;
+  flex-wrap: wrap;
   gap: 14px;
 }
 
@@ -349,10 +350,59 @@ select {
   font-size: 1rem;
 }
 
+.chart-toolbar {
+  min-height: 54px;
+  border: 1px solid #dbe5e8;
+  border-radius: 8px;
+  background: #f9fcff;
+  padding: 10px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  flex: 1 1 220px;
+}
+
+.chart-toolbar > span {
+  color: #60727c;
+  font-size: 0.72rem;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.chart-toolbar > div {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.chart-toolbar button {
+  width: 32px;
+  min-width: 32px;
+  min-height: 32px;
+  height: 32px;
+  padding: 0;
+  border: 1px solid #dbe5e8;
+  background: #ffffff;
+  color: #17212c;
+}
+
+.chart-toolbar button:nth-child(2) {
+  width: auto;
+  min-width: 78px;
+  padding: 0 10px;
+  background: #e5f5f3;
+  border-color: #b4e5de;
+  color: #142536;
+  font-size: 0.72rem;
+  font-weight: 900;
+}
+
 .summary-pill {
   position: relative;
   overflow: hidden;
   min-width: 190px;
+  flex: 1 1 190px;
   border: 1px solid #b7e2e4;
   border-radius: 8px;
   background: #f2fcfc;
@@ -411,13 +461,17 @@ select {
     #fbfdff;
   display: flex;
   align-items: end;
-  gap: 12px;
+  gap: var(--chart-gap, 12px);
   padding: 28px 16px 12px;
 }
 
+.bar-chart.daily {
+  min-height: 340px;
+}
+
 .bar-column {
-  width: 58px;
-  min-width: 42px;
+  width: var(--chart-column-width, 58px);
+  min-width: var(--chart-column-width, 42px);
   height: 236px;
   display: grid;
   grid-template-rows: 22px 1fr 24px;
@@ -425,8 +479,12 @@ select {
   gap: 6px;
 }
 
+.bar-chart.daily .bar-column {
+  height: 286px;
+}
+
 .bar-value {
-  width: 68px;
+  width: calc(var(--chart-column-width, 58px) + 14px);
   color: #17212c;
   font-size: 0.68rem;
   font-weight: 900;
@@ -435,7 +493,7 @@ select {
 }
 
 .bar-track {
-  width: 34px;
+  width: var(--chart-bar-width, 34px);
   height: 100%;
   border-radius: 8px 8px 3px 3px;
   background: #edf3f5;
@@ -669,6 +727,11 @@ th {
 
   .analytics-heading {
     flex-direction: column;
+  }
+
+  .chart-toolbar {
+    flex: 1 1 auto;
+    width: 100%;
   }
 
   .summary-pill {

@@ -1,5 +1,10 @@
-import { Activity, BarChart3, CalendarDays, Factory, Gauge, Zap } from 'lucide-react';
+import { useState } from 'react';
+import { Activity, BarChart3, CalendarDays, Factory, Gauge, Minus, Plus, RotateCcw, Zap } from 'lucide-react';
 import ReadingsScreen from './ReadingsScreen';
+
+const MIN_CHART_ZOOM = 0.75;
+const MAX_CHART_ZOOM = 2;
+const CHART_ZOOM_STEP = 0.25;
 
 function formatNumber(value, decimals = 2) {
   const parsed = Number(value);
@@ -30,7 +35,35 @@ function MetricCard({ icon: Icon, label, value, detail }) {
   );
 }
 
-function ChartPanel({ title, icon: Icon, summaryLabel, summaryValue, summaryHint, children }) {
+function clampZoom(value) {
+  return Math.min(MAX_CHART_ZOOM, Math.max(MIN_CHART_ZOOM, Number(value.toFixed(2))));
+}
+
+function ZoomControls({ zoomLevel, onZoomIn, onZoomOut, onReset }) {
+  const zoomPercent = Math.round(zoomLevel * 100);
+  const canZoomOut = zoomLevel > MIN_CHART_ZOOM;
+  const canZoomIn = zoomLevel < MAX_CHART_ZOOM;
+
+  return (
+    <div className="chart-toolbar" aria-label="Chart zoom controls">
+      <span>Zoom</span>
+      <div>
+        <button type="button" aria-label="Zoom out" disabled={!canZoomOut} onClick={onZoomOut}>
+          <Minus size={15} />
+        </button>
+        <button type="button" aria-label="Reset zoom" disabled={zoomLevel === 1} onClick={onReset}>
+          <RotateCcw size={14} />
+          {zoomPercent}%
+        </button>
+        <button type="button" aria-label="Zoom in" disabled={!canZoomIn} onClick={onZoomIn}>
+          <Plus size={15} />
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function ChartPanel({ title, icon: Icon, summaryLabel, summaryValue, summaryHint, zoomLevel, onZoomIn, onZoomOut, onReset, children }) {
   return (
     <section className="analytics-panel">
       <header className="analytics-heading">
@@ -45,20 +78,33 @@ function ChartPanel({ title, icon: Icon, summaryLabel, summaryValue, summaryHint
           <span>{summaryLabel}</span>
           {summaryHint ? <small>{summaryHint}</small> : null}
         </div>
+        <ZoomControls zoomLevel={zoomLevel} onZoomIn={onZoomIn} onZoomOut={onZoomOut} onReset={onReset} />
       </header>
       {children}
     </section>
   );
 }
 
-function SimpleBarChart({ rows, valueKey, emptyMessage }) {
+function chartScaleStyle(zoomLevel, daily = false) {
+  const baseColumnWidth = daily ? 42 : 58;
+  const baseBarWidth = daily ? 20 : 34;
+  const baseGap = daily ? 10 : 12;
+
+  return {
+    '--chart-column-width': `${Math.round(baseColumnWidth * zoomLevel)}px`,
+    '--chart-bar-width': `${Math.round(baseBarWidth * zoomLevel)}px`,
+    '--chart-gap': `${Math.round(baseGap * zoomLevel)}px`,
+  };
+}
+
+function SimpleBarChart({ rows, valueKey, emptyMessage, zoomLevel, daily = false }) {
   const visibleRows = [...(rows ?? [])].reverse();
   const maxValue = Math.max(...visibleRows.map((row) => Number(row[valueKey]) || 0), 1);
   const hasData = visibleRows.some((row) => Number(row[valueKey]) > 0);
 
   return (
     <>
-      <div className="bar-chart" role="img" aria-label={emptyMessage}>
+      <div className={`bar-chart${daily ? ' daily' : ''}`} role="img" aria-label={emptyMessage} style={chartScaleStyle(zoomLevel, daily)}>
         {visibleRows.map((row) => {
           const value = Number(row[valueKey]) || 0;
           const height = Math.max(3, Math.round((value / maxValue) * 100));
@@ -79,14 +125,14 @@ function SimpleBarChart({ rows, valueKey, emptyMessage }) {
   );
 }
 
-function StackedPowerChart({ rows }) {
+function StackedPowerChart({ rows, zoomLevel }) {
   const visibleRows = [...(rows ?? [])].reverse();
   const maxValue = Math.max(...visibleRows.map((row) => Number(row.totalPower) || 0), 1);
   const hasData = visibleRows.some((row) => Number(row.totalPower) > 0);
 
   return (
     <>
-      <div className="bar-chart stacked" role="img" aria-label="Monthly power consumption">
+      <div className="bar-chart stacked" role="img" aria-label="Monthly power consumption" style={chartScaleStyle(zoomLevel)}>
         {visibleRows.map((row) => {
           const chlorinationPower = Number(row.chlorinationPower) || 0;
           const deepwellPower = Number(row.deepwellPower) || 0;
@@ -119,12 +165,21 @@ function StackedPowerChart({ rows }) {
 }
 
 export default function OverviewScreen({ dashboard }) {
+  const [powerZoom, setPowerZoom] = useState(1);
+  const [monthlyProductionZoom, setMonthlyProductionZoom] = useState(1);
+  const [dailyProductionZoom, setDailyProductionZoom] = useState(1);
   const stats = dashboard?.stats ?? {};
   const monthlyProduction = dashboard?.monthlyProduction ?? { totalProduction: 0, averageProduction: 0, rows: [] };
   const dailyProduction = dashboard?.dailyProduction ?? { monthLabel: '', totalProduction: 0, rows: [] };
   const monthlyPowerConsumption = dashboard?.monthlyPowerConsumption ?? { totalPower: 0, rows: [] };
   const activeDailyRows = dailyProduction.rows.filter((row) => Number(row.production) > 0);
   const latestPower = monthlyPowerConsumption.rows[0]?.totalPower ?? 0;
+  const zoomProps = (zoomLevel, setZoomLevel) => ({
+    zoomLevel,
+    onZoomIn: () => setZoomLevel((current) => clampZoom(current + CHART_ZOOM_STEP)),
+    onZoomOut: () => setZoomLevel((current) => clampZoom(current - CHART_ZOOM_STEP)),
+    onReset: () => setZoomLevel(1),
+  });
 
   return (
     <>
@@ -162,8 +217,9 @@ export default function OverviewScreen({ dashboard }) {
           summaryLabel="Total Power"
           summaryValue={formatNumber(monthlyPowerConsumption.totalPower)}
           summaryHint="Latest 10 months"
+          {...zoomProps(powerZoom, setPowerZoom)}
         >
-          <StackedPowerChart rows={monthlyPowerConsumption.rows} />
+          <StackedPowerChart rows={monthlyPowerConsumption.rows} zoomLevel={powerZoom} />
         </ChartPanel>
 
         <ChartPanel
@@ -172,11 +228,13 @@ export default function OverviewScreen({ dashboard }) {
           summaryLabel="Total Production"
           summaryValue={formatNumber(monthlyProduction.totalProduction)}
           summaryHint="Latest 10 months"
+          {...zoomProps(monthlyProductionZoom, setMonthlyProductionZoom)}
         >
           <SimpleBarChart
             rows={monthlyProduction.rows}
             valueKey="production"
             emptyMessage="Monthly production will appear after readings with totalizer values are saved."
+            zoomLevel={monthlyProductionZoom}
           />
         </ChartPanel>
 
@@ -186,11 +244,14 @@ export default function OverviewScreen({ dashboard }) {
           summaryLabel="Current Month"
           summaryValue={formatNumber(dailyProduction.totalProduction)}
           summaryHint={`${activeDailyRows.length} active day(s)`}
+          {...zoomProps(dailyProductionZoom, setDailyProductionZoom)}
         >
           <SimpleBarChart
             rows={dailyProduction.rows}
             valueKey="production"
             emptyMessage="Daily production will appear after current-month totalizer values are saved."
+            zoomLevel={dailyProductionZoom}
+            daily
           />
         </ChartPanel>
       </section>
