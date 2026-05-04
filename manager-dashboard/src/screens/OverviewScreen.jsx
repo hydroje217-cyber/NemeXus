@@ -226,6 +226,17 @@ export default function OverviewScreen({ dashboard }) {
 
       <section className="chart-grid">
         <ChartPanel
+          title={`${dailyPowerConsumption.monthLabel || 'Current Month'} Power Consumption`}
+          icon={Zap}
+          summaryLabel="Current Month Power"
+          summaryValue={formatNumber(dailyPowerConsumption.totalPower)}
+          summaryHint={`${activeDailyPowerRows.length} active day(s)`}
+          {...zoomProps(dailyPowerZoom, setDailyPowerZoom)}
+        >
+          <StackedPowerChart rows={dailyPowerConsumption.rows} zoomLevel={dailyPowerZoom} daily />
+        </ChartPanel>
+
+        <ChartPanel
           title="Monthly Power Consumption"
           icon={Zap}
           summaryLabel="Total Power"
@@ -234,22 +245,6 @@ export default function OverviewScreen({ dashboard }) {
           {...zoomProps(powerZoom, setPowerZoom)}
         >
           <StackedPowerChart rows={monthlyPowerConsumption.rows} zoomLevel={powerZoom} />
-        </ChartPanel>
-
-        <ChartPanel
-          title="Monthly Production"
-          icon={BarChart3}
-          summaryLabel="Total Production"
-          summaryValue={formatNumber(monthlyProduction.totalProduction)}
-          summaryHint="Latest 10 months"
-          {...zoomProps(monthlyProductionZoom, setMonthlyProductionZoom)}
-        >
-          <SimpleBarChart
-            rows={monthlyProduction.rows}
-            valueKey="production"
-            emptyMessage="Monthly production will appear after readings with totalizer values are saved."
-            zoomLevel={monthlyProductionZoom}
-          />
         </ChartPanel>
 
         <ChartPanel
@@ -270,14 +265,19 @@ export default function OverviewScreen({ dashboard }) {
         </ChartPanel>
 
         <ChartPanel
-          title={`${dailyPowerConsumption.monthLabel || 'Current Month'} Power Consumption`}
-          icon={Zap}
-          summaryLabel="Current Month Power"
-          summaryValue={formatNumber(dailyPowerConsumption.totalPower)}
-          summaryHint={`${activeDailyPowerRows.length} active day(s)`}
-          {...zoomProps(dailyPowerZoom, setDailyPowerZoom)}
+          title="Monthly Production"
+          icon={BarChart3}
+          summaryLabel="Total Production"
+          summaryValue={formatNumber(monthlyProduction.totalProduction)}
+          summaryHint="Latest 10 months"
+          {...zoomProps(monthlyProductionZoom, setMonthlyProductionZoom)}
         >
-          <StackedPowerChart rows={dailyPowerConsumption.rows} zoomLevel={dailyPowerZoom} daily />
+          <SimpleBarChart
+            rows={monthlyProduction.rows}
+            valueKey="production"
+            emptyMessage="Monthly production will appear after readings with totalizer values are saved."
+            zoomLevel={monthlyProductionZoom}
+          />
         </ChartPanel>
       </section>
 
