@@ -103,12 +103,12 @@ export async function getDashboardSnapshot({ limit = 14 } = {}) {
       .limit(30),
     supabase
       .from('chlorination_readings')
-      .select('id, status, created_at, reading_datetime, slot_datetime, totalizer, chlorination_power_kwh')
+      .select('id, site_id, status, created_at, reading_datetime, slot_datetime, totalizer, chlorination_power_kwh')
       .gte('reading_datetime', startOfMonthlyProductionSourceIso())
       .order('reading_datetime', { ascending: true }),
     supabase
       .from('deepwell_readings')
-      .select('id, status, created_at, reading_datetime, slot_datetime, power_kwh_shift')
+      .select('id, site_id, status, created_at, reading_datetime, slot_datetime, power_kwh_shift')
       .gte('reading_datetime', startOfMonthlyProductionSourceIso())
       .order('reading_datetime', { ascending: true }),
   ]);
