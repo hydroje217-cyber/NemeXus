@@ -1,4 +1,10 @@
 import { supabase } from '../lib/supabase';
+import {
+  buildDailyProduction,
+  buildMonthlyPowerConsumption,
+  buildMonthlyProduction,
+  startOfMonthlyProductionSourceIso,
+} from '../utils/production';
 
 const OFFICE_ROLES = new Set(['manager', 'supervisor', 'admin']);
 
@@ -55,6 +61,8 @@ export async function getDashboardSnapshot({ limit = 14 } = {}) {
     recentChlorination,
     recentDeepwell,
     profiles,
+    monthlyChlorination,
+    monthlyDeepwell,
   ] = await Promise.all([
     supabase
       .from('profiles')
@@ -92,6 +100,16 @@ export async function getDashboardSnapshot({ limit = 14 } = {}) {
       .select('id, email, full_name, role, is_active, is_approved, approved_at, created_at')
       .order('created_at', { ascending: false })
       .limit(30),
+    supabase
+      .from('chlorination_readings')
+      .select('id, status, created_at, reading_datetime, slot_datetime, totalizer, chlorination_power_kwh')
+      .gte('reading_datetime', startOfMonthlyProductionSourceIso())
+      .order('reading_datetime', { ascending: true }),
+    supabase
+      .from('deepwell_readings')
+      .select('id, status, created_at, reading_datetime, slot_datetime, power_kwh_shift')
+      .gte('reading_datetime', startOfMonthlyProductionSourceIso())
+      .order('reading_datetime', { ascending: true }),
   ]);
 
   throwIfError(pendingApprovals, 'Failed to load pending approvals.');
@@ -103,6 +121,8 @@ export async function getDashboardSnapshot({ limit = 14 } = {}) {
   throwIfError(recentChlorination, 'Failed to load recent chlorination readings.');
   throwIfError(recentDeepwell, 'Failed to load recent deepwell readings.');
   throwIfError(profiles, 'Failed to load accounts.');
+  throwIfError(monthlyChlorination, 'Failed to load monthly chlorination production.');
+  throwIfError(monthlyDeepwell, 'Failed to load monthly deepwell power consumption.');
 
   const recentReadings = [
     ...(recentChlorination.data ?? []).map((row) => normalizeReading(row, 'CHLORINATION')),
@@ -122,6 +142,12 @@ export async function getDashboardSnapshot({ limit = 14 } = {}) {
     pendingApprovals: pendingApprovals.data ?? [],
     recentReadings,
     profiles: profiles.data ?? [],
+    monthlyProduction: buildMonthlyProduction(monthlyChlorination.data ?? []),
+    dailyProduction: buildDailyProduction(monthlyChlorination.data ?? []),
+    monthlyPowerConsumption: buildMonthlyPowerConsumption({
+      chlorinationReadings: monthlyChlorination.data ?? [],
+      deepwellReadings: monthlyDeepwell.data ?? [],
+    }),
   };
 }
 

@@ -10,7 +10,7 @@ function titleize(value) {
 
 function getTabs(isAdmin) {
   const tabs = [
-    { key: 'overview', label: 'Overview', icon: BarChart3 },
+    { key: 'dashboard', label: 'Dashboard', icon: BarChart3 },
     { key: 'readings', label: 'Readings', icon: Droplets },
   ];
 

@@ -19,7 +19,7 @@ export default function App() {
   const [dashboard, setDashboard] = useState(null);
   const [loading, setLoading] = useState(true);
   const [message, setMessage] = useState('');
-  const [activeView, setActiveView] = useState('overview');
+  const [activeView, setActiveView] = useState('dashboard');
   const [workingId, setWorkingId] = useState('');
 
   const isAdmin = profile?.role === 'admin';
