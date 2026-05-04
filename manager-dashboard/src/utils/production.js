@@ -242,6 +242,51 @@ export function buildDailyProduction(readings, options = {}) {
   };
 }
 
+export function buildDailyPowerConsumption({ chlorinationReadings = [], deepwellReadings = [] } = {}, options = {}) {
+  const { now = new Date() } = options;
+  const firstVisibleDay = new Date(now.getFullYear(), now.getMonth(), 1);
+  const visibleFromDate = createDayKey(firstVisibleDay);
+  const visibleToDate = createDayKey(now);
+  const chlorinationRowsByDate = new Map(
+    aggregateDailyRows(
+      chlorinationReadings,
+      [{ key: 'power', field: 'chlorination_power_kwh', aggregate: 'previousDayDifference' }],
+      { visibleFromDate, visibleToDate }
+    ).map((row) => [row.date, row])
+  );
+  const deepwellRowsByDate = new Map(
+    aggregateDailyRows(
+      deepwellReadings,
+      [{ key: 'power', field: 'power_kwh_shift', aggregate: 'previousDayDifference' }],
+      { visibleFromDate, visibleToDate }
+    ).map((row) => [row.date, row])
+  );
+  const rows = [];
+
+  for (let date = new Date(firstVisibleDay); date <= now; date.setDate(date.getDate() + 1)) {
+    const key = createDayKey(date);
+    const chlorinationPower = parseProductionNumber(chlorinationRowsByDate.get(key)?.power) ?? 0;
+    const deepwellPower = parseProductionNumber(deepwellRowsByDate.get(key)?.power) ?? 0;
+
+    rows.push({
+      key,
+      date: key,
+      label: `${String(date.getMonth() + 1).padStart(2, '0')}/${String(date.getDate()).padStart(2, '0')}`,
+      chlorinationPower,
+      deepwellPower,
+      totalPower: chlorinationPower + deepwellPower,
+    });
+  }
+
+  rows.sort((a, b) => b.key.localeCompare(a.key));
+
+  return {
+    monthLabel: createFullMonthLabel(now),
+    totalPower: rows.reduce((sum, row) => sum + row.totalPower, 0),
+    rows,
+  };
+}
+
 function createMonthlyRows({ now, monthCount }) {
   const firstVisibleMonth = new Date(now.getFullYear(), now.getMonth() - monthCount + 1, 1);
   const lastVisibleMonth = new Date(now.getFullYear(), now.getMonth(), 1);

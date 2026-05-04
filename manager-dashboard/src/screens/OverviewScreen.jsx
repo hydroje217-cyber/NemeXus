@@ -125,14 +125,19 @@ function SimpleBarChart({ rows, valueKey, emptyMessage, zoomLevel, daily = false
   );
 }
 
-function StackedPowerChart({ rows, zoomLevel }) {
+function StackedPowerChart({ rows, zoomLevel, daily = false }) {
   const visibleRows = [...(rows ?? [])].reverse();
   const maxValue = Math.max(...visibleRows.map((row) => Number(row.totalPower) || 0), 1);
   const hasData = visibleRows.some((row) => Number(row.totalPower) > 0);
 
   return (
     <>
-      <div className="bar-chart stacked" role="img" aria-label="Monthly power consumption" style={chartScaleStyle(zoomLevel)}>
+      <div
+        className={`bar-chart stacked${daily ? ' daily' : ''}`}
+        role="img"
+        aria-label={daily ? 'Daily power consumption' : 'Monthly power consumption'}
+        style={chartScaleStyle(zoomLevel, daily)}
+      >
         {visibleRows.map((row) => {
           const chlorinationPower = Number(row.chlorinationPower) || 0;
           const deepwellPower = Number(row.deepwellPower) || 0;
@@ -168,11 +173,14 @@ export default function OverviewScreen({ dashboard }) {
   const [powerZoom, setPowerZoom] = useState(1);
   const [monthlyProductionZoom, setMonthlyProductionZoom] = useState(1);
   const [dailyProductionZoom, setDailyProductionZoom] = useState(1);
+  const [dailyPowerZoom, setDailyPowerZoom] = useState(1);
   const stats = dashboard?.stats ?? {};
   const monthlyProduction = dashboard?.monthlyProduction ?? { totalProduction: 0, averageProduction: 0, rows: [] };
   const dailyProduction = dashboard?.dailyProduction ?? { monthLabel: '', totalProduction: 0, rows: [] };
   const monthlyPowerConsumption = dashboard?.monthlyPowerConsumption ?? { totalPower: 0, rows: [] };
+  const dailyPowerConsumption = dashboard?.dailyPowerConsumption ?? { monthLabel: '', totalPower: 0, rows: [] };
   const activeDailyRows = dailyProduction.rows.filter((row) => Number(row.production) > 0);
+  const activeDailyPowerRows = dailyPowerConsumption.rows.filter((row) => Number(row.totalPower) > 0);
   const latestPower = monthlyPowerConsumption.rows[0]?.totalPower ?? 0;
   const zoomProps = (zoomLevel, setZoomLevel) => ({
     zoomLevel,
@@ -201,6 +209,12 @@ export default function OverviewScreen({ dashboard }) {
           label="Current month"
           value={formatNumber(dailyProduction.totalProduction)}
           detail={`${activeDailyRows.length} active day(s)`}
+        />
+        <MetricCard
+          icon={Zap}
+          label="Current month power"
+          value={formatNumber(dailyPowerConsumption.totalPower)}
+          detail={`${activeDailyPowerRows.length} active day(s)`}
         />
         <MetricCard
           icon={Activity}
@@ -253,6 +267,17 @@ export default function OverviewScreen({ dashboard }) {
             zoomLevel={dailyProductionZoom}
             daily
           />
+        </ChartPanel>
+
+        <ChartPanel
+          title={`${dailyPowerConsumption.monthLabel || 'Current Month'} Power Consumption`}
+          icon={Zap}
+          summaryLabel="Current Month Power"
+          summaryValue={formatNumber(dailyPowerConsumption.totalPower)}
+          summaryHint={`${activeDailyPowerRows.length} active day(s)`}
+          {...zoomProps(dailyPowerZoom, setDailyPowerZoom)}
+        >
+          <StackedPowerChart rows={dailyPowerConsumption.rows} zoomLevel={dailyPowerZoom} daily />
         </ChartPanel>
       </section>
 

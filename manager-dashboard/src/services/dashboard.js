@@ -1,5 +1,6 @@
 import { supabase } from '../lib/supabase';
 import {
+  buildDailyPowerConsumption,
   buildDailyProduction,
   buildMonthlyPowerConsumption,
   buildMonthlyProduction,
@@ -145,6 +146,10 @@ export async function getDashboardSnapshot({ limit = 14 } = {}) {
     monthlyProduction: buildMonthlyProduction(monthlyChlorination.data ?? []),
     dailyProduction: buildDailyProduction(monthlyChlorination.data ?? []),
     monthlyPowerConsumption: buildMonthlyPowerConsumption({
+      chlorinationReadings: monthlyChlorination.data ?? [],
+      deepwellReadings: monthlyDeepwell.data ?? [],
+    }),
+    dailyPowerConsumption: buildDailyPowerConsumption({
       chlorinationReadings: monthlyChlorination.data ?? [],
       deepwellReadings: monthlyDeepwell.data ?? [],
     }),
