@@ -1,5 +1,16 @@
 import { useState } from 'react';
 import { Activity, BarChart3, CalendarDays, Factory, Gauge, Minus, Plus, RotateCcw, Zap } from 'lucide-react';
+import {
+  Bar,
+  BarChart as RechartsBarChart,
+  CartesianGrid,
+  LabelList,
+  Legend,
+  ResponsiveContainer,
+  Tooltip,
+  XAxis,
+  YAxis,
+} from 'recharts';
 import ReadingsScreen from './ReadingsScreen';
 
 const MIN_CHART_ZOOM = 0.75;
@@ -90,44 +101,102 @@ function ChartPanel({ title, icon: Icon, summaryLabel, summaryValue, summaryHint
   );
 }
 
-function SegmentLabel({ value, tone }) {
-  return value > 0 ? <span className={`stack-label ${tone}`}>{formatNumber(value)}</span> : null;
+function getChartWidth(rowCount, zoomLevel, daily = false) {
+  const baseColumnWidth = daily ? 54 : 78;
+  const baseMinimumWidth = daily ? 760 : 600;
+
+  return Math.max(baseMinimumWidth, Math.round(rowCount * baseColumnWidth * zoomLevel));
 }
 
-function chartScaleStyle(zoomLevel, daily = false) {
-  const baseColumnWidth = daily ? 42 : 58;
-  const baseBarWidth = daily ? 20 : 34;
-  const baseGap = daily ? 10 : 12;
+function formatAxisNumber(value) {
+  return formatNumber(value, 0);
+}
 
-  return {
-    '--chart-column-width': `${Math.round(baseColumnWidth * zoomLevel)}px`,
-    '--chart-bar-width': `${Math.round(baseBarWidth * zoomLevel)}px`,
-    '--chart-gap': `${Math.round(baseGap * zoomLevel)}px`,
-  };
+function TooltipContent({ active, label, payload }) {
+  if (!active || !payload?.length) {
+    return null;
+  }
+
+  return (
+    <div className="chart-tooltip">
+      <strong>{label}</strong>
+      {payload.map((item) => (
+        <span key={item.dataKey} style={{ '--tooltip-color': item.color }}>
+          {item.name}: {formatNumber(item.value)}
+        </span>
+      ))}
+    </div>
+  );
+}
+
+function ChartValueLabel({ x, y, width, value }) {
+  if (!value || value <= 0) {
+    return null;
+  }
+
+  return (
+    <text x={x + width / 2} y={y - 8} textAnchor="middle" className="recharts-total-label">
+      {formatNumber(value)}
+    </text>
+  );
+}
+
+function StackSegmentLabel({ x, y, width, height, value, fill }) {
+  if (!value || value <= 0 || height < 32 || width < 24) {
+    return null;
+  }
+
+  const isDeepwell = fill === '#f59e0b';
+
+  return (
+    <text
+      x={x + width / 2}
+      y={y + height / 2 + 4}
+      textAnchor="middle"
+      className={isDeepwell ? 'recharts-stack-label dark' : 'recharts-stack-label'}
+    >
+      {formatNumber(value)}
+    </text>
+  );
 }
 
 function SimpleBarChart({ rows, valueKey, emptyMessage, zoomLevel, daily = false }) {
   const visibleRows = [...(rows ?? [])].reverse();
-  const maxValue = Math.max(...visibleRows.map((row) => Number(row[valueKey]) || 0), 1);
+  const chartRows = visibleRows.map((row) => ({
+    label: row.label,
+    value: Number(row[valueKey]) || 0,
+  }));
   const hasData = visibleRows.some((row) => Number(row[valueKey]) > 0);
+  const chartWidth = getChartWidth(chartRows.length, zoomLevel, daily);
+  const chartHeight = daily ? 330 : 290;
 
   return (
     <>
-      <div className={`bar-chart${daily ? ' daily' : ''}`} role="img" aria-label={emptyMessage} style={chartScaleStyle(zoomLevel, daily)}>
-        {visibleRows.map((row) => {
-          const value = Number(row[valueKey]) || 0;
-          const height = Math.max(3, Math.round((value / maxValue) * 100));
-
-          return (
-            <div className="bar-column" key={row.key || row.label}>
-              <span className="bar-value">{value > 0 ? formatNumber(value) : ''}</span>
-              <div className="bar-track">
-                <span className="bar-fill" style={{ height: `${height}%` }} />
-              </div>
-              <span className="bar-label">{row.label}</span>
-            </div>
-          );
-        })}
+      <div className="chart-frame" role="img" aria-label={emptyMessage}>
+        <div className="chart-scroll">
+          <div className="chart-canvas" style={{ width: chartWidth, height: chartHeight }}>
+            <ResponsiveContainer width="100%" height="100%">
+              <RechartsBarChart data={chartRows} margin={{ top: 26, right: 18, left: 12, bottom: 10 }}>
+                <CartesianGrid stroke="#d9e4e8" strokeDasharray="6 10" vertical={false} />
+                <XAxis dataKey="label" axisLine={{ stroke: '#9fb3bd' }} tickLine={false} tick={{ fill: '#4b5d66', fontSize: 11, fontWeight: 800 }} />
+                <YAxis
+                  axisLine={{ stroke: '#9fb3bd' }}
+                  tickLine={false}
+                  tick={{ fill: '#60727c', fontSize: 11, fontWeight: 800 }}
+                  tickFormatter={formatAxisNumber}
+                  width={64}
+                />
+                <Tooltip content={<TooltipContent />} cursor={{ fill: 'rgba(17, 106, 117, 0.08)' }} />
+                <Bar dataKey="value" name="Production" fill="#1398aa" radius={[7, 7, 0, 0]} barSize={daily ? 22 : 36}>
+                  <LabelList dataKey="value" content={<ChartValueLabel />} />
+                </Bar>
+              </RechartsBarChart>
+            </ResponsiveContainer>
+          </div>
+        </div>
+      </div>
+      <div className="chart-legend">
+        <span><i className="legend-swatch production" />Production</span>
       </div>
       {!hasData ? <p className="chart-empty">{emptyMessage}</p> : null}
     </>
@@ -136,42 +205,45 @@ function SimpleBarChart({ rows, valueKey, emptyMessage, zoomLevel, daily = false
 
 function StackedPowerChart({ rows, zoomLevel, daily = false }) {
   const visibleRows = [...(rows ?? [])].reverse();
-  const maxValue = Math.max(...visibleRows.map((row) => Number(row.totalPower) || 0), 1);
+  const chartRows = visibleRows.map((row) => ({
+    label: row.label,
+    chlorinationPower: Number(row.chlorinationPower) || 0,
+    deepwellPower: Number(row.deepwellPower) || 0,
+    totalPower: Number(row.totalPower) || 0,
+  }));
   const hasData = visibleRows.some((row) => Number(row.totalPower) > 0);
+  const chartWidth = getChartWidth(chartRows.length, zoomLevel, daily);
+  const chartHeight = daily ? 330 : 290;
 
   return (
     <>
-      <div
-        className={`bar-chart stacked${daily ? ' daily' : ''}`}
-        role="img"
-        aria-label={daily ? 'Daily power consumption' : 'Monthly power consumption'}
-        style={chartScaleStyle(zoomLevel, daily)}
-      >
-        {visibleRows.map((row) => {
-          const chlorinationPower = Number(row.chlorinationPower) || 0;
-          const deepwellPower = Number(row.deepwellPower) || 0;
-          const totalPower = Number(row.totalPower) || chlorinationPower + deepwellPower;
-          const totalHeight = Math.max(3, Math.round((totalPower / maxValue) * 100));
-          const chlorinationShare = totalPower ? (chlorinationPower / totalPower) * 100 : 0;
-          const deepwellShare = totalPower ? (deepwellPower / totalPower) * 100 : 0;
-
-          return (
-            <div className="bar-column" key={row.key || row.label}>
-              <span className="bar-value">{totalPower > 0 ? formatNumber(totalPower) : ''}</span>
-              <div className="bar-track">
-                <span className="stack-fill" style={{ height: `${totalHeight}%` }}>
-                  <span className="stack-segment chlorination" style={{ height: `${chlorinationShare}%` }}>
-                    <SegmentLabel value={chlorinationPower} tone="light" />
-                  </span>
-                  <span className="stack-segment deepwell" style={{ height: `${deepwellShare}%` }}>
-                    <SegmentLabel value={deepwellPower} tone="dark" />
-                  </span>
-                </span>
-              </div>
-              <span className="bar-label">{row.label}</span>
-            </div>
-          );
-        })}
+      <div className="chart-frame" role="img" aria-label={daily ? 'Daily power consumption' : 'Monthly power consumption'}>
+        <div className="chart-scroll">
+          <div className="chart-canvas" style={{ width: chartWidth, height: chartHeight }}>
+            <ResponsiveContainer width="100%" height="100%">
+              <RechartsBarChart data={chartRows} margin={{ top: 30, right: 18, left: 12, bottom: 10 }}>
+                <CartesianGrid stroke="#d9e4e8" strokeDasharray="6 10" vertical={false} />
+                <XAxis dataKey="label" axisLine={{ stroke: '#9fb3bd' }} tickLine={false} tick={{ fill: '#4b5d66', fontSize: 11, fontWeight: 800 }} />
+                <YAxis
+                  axisLine={{ stroke: '#9fb3bd' }}
+                  tickLine={false}
+                  tick={{ fill: '#60727c', fontSize: 11, fontWeight: 800 }}
+                  tickFormatter={formatAxisNumber}
+                  width={64}
+                />
+                <Tooltip content={<TooltipContent />} cursor={{ fill: 'rgba(17, 106, 117, 0.08)' }} />
+                <Legend wrapperStyle={{ display: 'none' }} />
+                <Bar dataKey="chlorinationPower" name="Chlorination" stackId="power" fill="#149a8d" radius={[0, 0, 7, 7]} barSize={daily ? 22 : 36}>
+                  <LabelList dataKey="chlorinationPower" content={<StackSegmentLabel fill="#149a8d" />} />
+                </Bar>
+                <Bar dataKey="deepwellPower" name="Deepwell" stackId="power" fill="#f59e0b" radius={[7, 7, 0, 0]} barSize={daily ? 22 : 36}>
+                  <LabelList dataKey="deepwellPower" content={<StackSegmentLabel fill="#f59e0b" />} />
+                  <LabelList dataKey="totalPower" content={<ChartValueLabel />} />
+                </Bar>
+              </RechartsBarChart>
+            </ResponsiveContainer>
+          </div>
+        </div>
       </div>
       <div className="chart-legend">
         <span><i className="legend-swatch chlorination" />Chlorination</span>
