@@ -1,3 +1,0 @@
-The following packages should be updated for best compatibility with the installed expo version:
-  @react-native-community/datetimepicker@9.1.0 - expected version: 8.4.4
-Your project may not work correctly until you install the expected versions of the packages.

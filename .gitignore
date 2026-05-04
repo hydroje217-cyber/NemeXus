@@ -25,12 +25,15 @@ expo-env.d.ts
 npm-debug.*
 yarn-debug.*
 yarn-error.*
+*.err
+*.out
 
 # macOS
 .DS_Store
 *.pem
 
 # local env files
+.env
 .env*.local
 
 # typescript
@@ -39,3 +42,8 @@ yarn-error.*
 # generated native folders
 /ios
 /android
+**/ios/
+**/android/
+
+# IDE
+.idea/

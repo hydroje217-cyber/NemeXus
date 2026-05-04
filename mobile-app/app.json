@@ -1,0 +1,54 @@
+{
+  "expo": {
+    "name": "nemexus",
+    "slug": "nemexus",
+    "scheme": "nemexus",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon-logo.png",
+    "userInterfaceStyle": "light",
+    "newArchEnabled": true,
+    "splash": {
+      "image": "./assets/splash-icon.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#030A11"
+    },
+    "ios": {
+      "supportsTablet": true
+    },
+    "android": {
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/adaptive-icon-logo.png",
+        "backgroundColor": "#ffffff"
+      },
+      "edgeToEdgeEnabled": true,
+      "softwareKeyboardLayoutMode": "pan",
+      "package": "com.anonymous.mobileexpo"
+    },
+    "web": {
+      "favicon": "./assets/favicon-logo.png"
+    },
+    "plugins": [
+      "expo-secure-store",
+      [
+        "expo-splash-screen",
+        {
+          "image": "./assets/splash-icon.png",
+          "imageWidth": 200,
+          "resizeMode": "contain",
+          "backgroundColor": "#030A11",
+          "dark": {
+            "image": "./assets/splash-icon.png",
+            "backgroundColor": "#030A11"
+          }
+        }
+      ]
+    ],
+    "extra": {
+      "eas": {
+        "projectId": "69ac0f70-f59a-4d34-a842-40ac2adce586"
+      }
+    },
+    "owner": "je-hydro"
+  }
+}
