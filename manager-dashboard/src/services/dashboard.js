@@ -2,6 +2,7 @@ import { supabase } from '../lib/supabase';
 import {
   buildDailyPowerConsumption,
   buildDailyProduction,
+  buildMonthlyChemicalUsage,
   buildMonthlyPowerConsumption,
   buildMonthlyProduction,
   startOfMonthlyProductionSourceIso,
@@ -49,7 +50,7 @@ export async function getProfile(userId) {
   return data;
 }
 
-export async function getDashboardSnapshot({ limit = 14 } = {}) {
+export async function getDashboardSnapshot({ limit = 50 } = {}) {
   const todayIso = startOfTodayIso();
 
   const [
@@ -103,7 +104,7 @@ export async function getDashboardSnapshot({ limit = 14 } = {}) {
       .limit(30),
     supabase
       .from('chlorination_readings')
-      .select('id, site_id, status, created_at, reading_datetime, slot_datetime, totalizer, chlorination_power_kwh')
+      .select('id, site_id, status, created_at, reading_datetime, slot_datetime, totalizer, chlorine_consumed, peroxide_consumption, chlorination_power_kwh')
       .gte('reading_datetime', startOfMonthlyProductionSourceIso())
       .order('reading_datetime', { ascending: true }),
     supabase
@@ -145,6 +146,7 @@ export async function getDashboardSnapshot({ limit = 14 } = {}) {
     profiles: profiles.data ?? [],
     monthlyProduction: buildMonthlyProduction(monthlyChlorination.data ?? []),
     dailyProduction: buildDailyProduction(monthlyChlorination.data ?? []),
+    monthlyChemicalUsage: buildMonthlyChemicalUsage(monthlyChlorination.data ?? []),
     monthlyPowerConsumption: buildMonthlyPowerConsumption({
       chlorinationReadings: monthlyChlorination.data ?? [],
       deepwellReadings: monthlyDeepwell.data ?? [],

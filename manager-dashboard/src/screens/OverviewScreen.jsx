@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Activity, BarChart3, CalendarDays, Factory, Gauge, Minus, Plus, RotateCcw, Zap } from 'lucide-react';
+import { BarChart3, CalendarDays, Clock, Droplets, FlaskConical, Grid3X3, History, Hourglass, Minus, Plus, RotateCcw, Zap } from 'lucide-react';
 import {
   Bar,
   BarChart as RechartsBarChart,
@@ -11,7 +11,6 @@ import {
   XAxis,
   YAxis,
 } from 'recharts';
-import ReadingsScreen from './ReadingsScreen';
 
 const MIN_CHART_ZOOM = 0.75;
 const MAX_CHART_ZOOM = 2;
@@ -27,23 +26,6 @@ function formatNumber(value, decimals = 2) {
     minimumFractionDigits: decimals,
     maximumFractionDigits: decimals,
   });
-}
-
-function MetricCard({ icon: Icon, label, value, detail }) {
-  return (
-    <section className="metric-card">
-      <div className="metric-heading">
-        <span className="metric-icon">
-          <Icon size={17} />
-        </span>
-        <p>{label}</p>
-      </div>
-      <div>
-        <strong>{value}</strong>
-        {detail ? <span>{detail}</span> : null}
-      </div>
-    </section>
-  );
 }
 
 function clampZoom(value) {
@@ -74,7 +56,19 @@ function ZoomControls({ zoomLevel, onZoomIn, onZoomOut, onReset }) {
   );
 }
 
-function ChartPanel({ title, icon: Icon, summaryLabel, summaryValue, summaryHint, zoomLevel, onZoomIn, onZoomOut, onReset, children }) {
+function ChartPanel({
+  title,
+  icon: Icon,
+  summaryLabel,
+  summaryValue,
+  summaryHint,
+  summaryItems,
+  zoomLevel,
+  onZoomIn,
+  onZoomOut,
+  onReset,
+  children,
+}) {
   return (
     <section className="analytics-panel">
       <header className="analytics-heading">
@@ -85,15 +79,22 @@ function ChartPanel({ title, icon: Icon, summaryLabel, summaryValue, summaryHint
           <h3>{title}</h3>
         </div>
       </header>
-      <div className="summary-pill">
-        <span className="summary-icon">
-          <Icon size={18} />
-        </span>
-        <div>
-          <span>{summaryLabel}</span>
-          <strong>{summaryValue}</strong>
-          {summaryHint ? <small>{summaryHint}</small> : null}
-        </div>
+      <div className={summaryItems?.length ? 'summary-pill-grid' : undefined}>
+        {(summaryItems?.length ? summaryItems : [{ label: summaryLabel, value: summaryValue, hint: summaryHint, icon: Icon }]).map((item) => {
+          const SummaryIcon = item.icon || Icon;
+          return (
+            <div className="summary-pill" key={item.label}>
+              <span className="summary-icon">
+                <SummaryIcon size={18} />
+              </span>
+              <div>
+                <span>{item.label}</span>
+                <strong>{item.value}</strong>
+                {item.hint ? <small>{item.hint}</small> : null}
+              </div>
+            </div>
+          );
+        })}
       </div>
       <ZoomControls zoomLevel={zoomLevel} onZoomIn={onZoomIn} onZoomOut={onZoomOut} onReset={onReset} />
       {children}
@@ -117,10 +118,12 @@ function TooltipContent({ active, label, payload }) {
     return null;
   }
 
+  const orderedPayload = [...payload].reverse();
+
   return (
     <div className="chart-tooltip">
       <strong>{label}</strong>
-      {payload.map((item) => (
+      {orderedPayload.map((item) => (
         <span key={item.dataKey} style={{ '--tooltip-color': item.color }}>
           {item.name}: {formatNumber(item.value)}
         </span>
@@ -161,7 +164,7 @@ function StackSegmentLabel({ x, y, width, height, value, fill }) {
 }
 
 function SimpleBarChart({ rows, valueKey, emptyMessage, zoomLevel, daily = false }) {
-  const visibleRows = [...(rows ?? [])].reverse();
+  const visibleRows = rows ?? [];
   const chartRows = visibleRows.map((row) => ({
     label: row.label,
     value: Number(row[valueKey]) || 0,
@@ -204,7 +207,7 @@ function SimpleBarChart({ rows, valueKey, emptyMessage, zoomLevel, daily = false
 }
 
 function StackedPowerChart({ rows, zoomLevel, daily = false }) {
-  const visibleRows = [...(rows ?? [])].reverse();
+  const visibleRows = rows ?? [];
   const chartRows = visibleRows.map((row) => ({
     label: row.label,
     chlorinationPower: Number(row.chlorinationPower) || 0,
@@ -254,19 +257,245 @@ function StackedPowerChart({ rows, zoomLevel, daily = false }) {
   );
 }
 
+function formatDateTime(value) {
+  if (!value) {
+    return '-';
+  }
+
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) {
+    return String(value);
+  }
+
+  return parsed.toLocaleString('en-US', {
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+  });
+}
+
+function getReadingTime(reading) {
+  const parsed = new Date(reading?.reading_datetime || reading?.slot_datetime || reading?.created_at || '');
+  return Number.isNaN(parsed.getTime()) ? 0 : parsed.getTime();
+}
+
+function isReadingInDateRange(reading, range) {
+  if (range === 'all') {
+    return true;
+  }
+
+  const time = getReadingTime(reading);
+  if (!time) {
+    return false;
+  }
+
+  const now = new Date();
+  const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+
+  if (range === 'today') {
+    return time >= todayStart;
+  }
+
+  if (range === '24h') {
+    return time >= now.getTime() - 24 * 60 * 60 * 1000;
+  }
+
+  if (range === '7d') {
+    return time >= now.getTime() - 7 * 24 * 60 * 60 * 1000;
+  }
+
+  return true;
+}
+
+function StackedChemicalChart({ rows, zoomLevel }) {
+  const visibleRows = rows ?? [];
+  const chartRows = visibleRows.map((row) => ({
+    label: row.label,
+    chlorineUsage: Number(row.chlorineUsage) || 0,
+    peroxideUsage: Number(row.peroxideUsage) || 0,
+    totalUsage: Number(row.totalUsage) || 0,
+  }));
+  const hasData = visibleRows.some((row) => Number(row.totalUsage) > 0);
+  const chartWidth = getChartWidth(chartRows.length, zoomLevel);
+  const chartHeight = 290;
+
+  return (
+    <>
+      <div className="chart-frame" role="img" aria-label="Monthly chemical usage">
+        <div className="chart-scroll">
+          <div className="chart-canvas" style={{ width: chartWidth, height: chartHeight }}>
+            <ResponsiveContainer width="100%" height="100%">
+              <RechartsBarChart data={chartRows} margin={{ top: 30, right: 18, left: 12, bottom: 10 }}>
+                <CartesianGrid stroke="#d9e4e8" strokeDasharray="6 10" vertical={false} />
+                <XAxis dataKey="label" axisLine={{ stroke: '#9fb3bd' }} tickLine={false} tick={{ fill: '#4b5d66', fontSize: 11, fontWeight: 800 }} />
+                <YAxis
+                  axisLine={{ stroke: '#9fb3bd' }}
+                  tickLine={false}
+                  tick={{ fill: '#60727c', fontSize: 11, fontWeight: 800 }}
+                  tickFormatter={formatAxisNumber}
+                  width={64}
+                />
+                <Tooltip content={<TooltipContent />} cursor={{ fill: 'rgba(17, 106, 117, 0.08)' }} />
+                <Legend wrapperStyle={{ display: 'none' }} />
+                <Bar dataKey="chlorineUsage" name="Chlorine" stackId="chemical" fill="#0f8f7c" radius={[0, 0, 7, 7]} barSize={36}>
+                  <LabelList dataKey="chlorineUsage" content={<StackSegmentLabel fill="#0f8f7c" />} />
+                </Bar>
+                <Bar dataKey="peroxideUsage" name="Peroxide" stackId="chemical" fill="#e7a321" radius={[7, 7, 0, 0]} barSize={36}>
+                  <LabelList dataKey="peroxideUsage" content={<StackSegmentLabel fill="#e7a321" />} />
+                  <LabelList dataKey="totalUsage" content={<ChartValueLabel />} />
+                </Bar>
+              </RechartsBarChart>
+            </ResponsiveContainer>
+          </div>
+        </div>
+      </div>
+      <div className="chart-legend">
+        <span><i className="legend-swatch chemical-chlorine" />Chlorine</span>
+        <span><i className="legend-swatch chemical-peroxide" />Peroxide</span>
+      </div>
+      {!hasData ? <p className="chart-empty">Monthly chemical usage will appear after chlorine and peroxide values are saved.</p> : null}
+    </>
+  );
+}
+
+function RecentReadingCard({ reading }) {
+  const isDeepwell = reading.site_type === 'DEEPWELL';
+  const submittedBy = reading.submitted_profile?.full_name || reading.submitted_profile?.email || '-';
+  const metricLabel = isDeepwell ? 'Power kWh' : 'Totalizer';
+  const metricValue = isDeepwell ? (reading.power_kwh_shift ?? '-') : (reading.totalizer ?? '-');
+
+  return (
+    <article className={isDeepwell ? 'recent-reading-card deepwell' : 'recent-reading-card chlorination'}>
+      <div className="recent-reading-topline">
+        <div>
+          <h4>{reading.site?.name || reading.sites?.name || (isDeepwell ? 'Deepwell reading' : 'Chlorination reading')}</h4>
+          <span>{isDeepwell ? 'Deepwell' : 'Chlorination'}</span>
+        </div>
+        <strong>{reading.status || 'submitted'}</strong>
+      </div>
+      <div className="recent-reading-meta">
+        <div>
+          <span>Operator</span>
+          <strong>{submittedBy}</strong>
+        </div>
+        <div>
+          <span>Slot</span>
+          <strong>{formatDateTime(reading.slot_datetime || reading.reading_datetime)}</strong>
+        </div>
+      </div>
+      <p>Submitted: {formatDateTime(reading.reading_datetime || reading.created_at)}</p>
+      <p>{metricLabel}: {metricValue}</p>
+    </article>
+  );
+}
+
+function RecentReadingsPanel({ readings }) {
+  const [typeFilter, setTypeFilter] = useState('all');
+  const [dateRange, setDateRange] = useState('all');
+  const sortedReadings = [...(readings ?? [])].sort((a, b) => getReadingTime(b) - getReadingTime(a));
+  const rangeReadings = sortedReadings.filter((reading) => isReadingInDateRange(reading, dateRange));
+  const chlorinationReadings = rangeReadings.filter((reading) => reading.site_type === 'CHLORINATION');
+  const deepwellReadings = rangeReadings.filter((reading) => reading.site_type === 'DEEPWELL');
+  const displayReadings =
+    typeFilter === 'all'
+      ? Array.from({ length: Math.max(chlorinationReadings.length, deepwellReadings.length) }).flatMap((_, index) =>
+          [chlorinationReadings[index], deepwellReadings[index]].filter(Boolean)
+        )
+      : rangeReadings.filter((reading) => reading.site_type === typeFilter);
+
+  const typeOptions = [
+    { key: 'all', label: 'All', icon: Grid3X3 },
+    { key: 'CHLORINATION', label: 'Chlorination', icon: Droplets },
+    { key: 'DEEPWELL', label: 'Deepwell', icon: Zap },
+  ];
+  const dateOptions = [
+    { key: 'all', label: 'All time', icon: Clock },
+    { key: 'today', label: 'Today', icon: CalendarDays },
+    { key: '24h', label: 'Last 24h', icon: Hourglass },
+    { key: '7d', label: 'Last 7 days', icon: CalendarDays },
+  ];
+
+  return (
+    <section className="recent-readings-panel">
+      <header className="recent-readings-heading">
+        <span className="section-icon">
+          <History size={16} />
+        </span>
+        <div>
+          <h3>Recent readings</h3>
+          <p>This account has readings-only office access.</p>
+        </div>
+      </header>
+
+      <div className="recent-reading-filters">
+        <div>
+          <span>Sort by type</span>
+          <div className="recent-chip-row">
+            {typeOptions.map((option) => {
+              const Icon = option.icon;
+              return (
+                <button
+                  type="button"
+                  key={option.key}
+                  className={typeFilter === option.key ? 'active' : ''}
+                  onClick={() => setTypeFilter(option.key)}
+                >
+                  <Icon size={15} />
+                  {option.label}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+
+        <div>
+          <span>Date range</span>
+          <div className="recent-chip-row">
+            {dateOptions.map((option) => {
+              const Icon = option.icon;
+              return (
+                <button
+                  type="button"
+                  key={option.key}
+                  className={dateRange === option.key ? 'active' : ''}
+                  onClick={() => setDateRange(option.key)}
+                >
+                  <Icon size={15} />
+                  {option.label}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      </div>
+
+      {displayReadings.length ? (
+        <div className="recent-reading-scroll">
+          <div className="recent-reading-grid">
+            {displayReadings.map((reading) => (
+              <RecentReadingCard key={`${reading.site_type}-${reading.id}`} reading={reading} />
+            ))}
+          </div>
+        </div>
+      ) : (
+        <p className="chart-empty">No recent readings found for this filter.</p>
+      )}
+    </section>
+  );
+}
+
 export default function OverviewScreen({ dashboard }) {
   const [powerZoom, setPowerZoom] = useState(1);
+  const [chemicalZoom, setChemicalZoom] = useState(1);
   const [monthlyProductionZoom, setMonthlyProductionZoom] = useState(1);
   const [dailyProductionZoom, setDailyProductionZoom] = useState(1);
-  const [dailyPowerZoom, setDailyPowerZoom] = useState(1);
-  const stats = dashboard?.stats ?? {};
   const monthlyProduction = dashboard?.monthlyProduction ?? { totalProduction: 0, averageProduction: 0, rows: [] };
   const dailyProduction = dashboard?.dailyProduction ?? { monthLabel: '', totalProduction: 0, rows: [] };
   const monthlyPowerConsumption = dashboard?.monthlyPowerConsumption ?? { totalPower: 0, rows: [] };
-  const dailyPowerConsumption = dashboard?.dailyPowerConsumption ?? { monthLabel: '', totalPower: 0, rows: [] };
+  const monthlyChemicalUsage = dashboard?.monthlyChemicalUsage ?? { totalChlorine: 0, totalPeroxide: 0, rows: [] };
   const activeDailyRows = dailyProduction.rows.filter((row) => Number(row.production) > 0);
-  const activeDailyPowerRows = dailyPowerConsumption.rows.filter((row) => Number(row.totalPower) > 0);
-  const latestPower = monthlyPowerConsumption.rows[0]?.totalPower ?? 0;
   const zoomProps = (zoomLevel, setZoomLevel) => ({
     zoomLevel,
     onZoomIn: () => setZoomLevel((current) => clampZoom(current + CHART_ZOOM_STEP)),
@@ -276,79 +505,7 @@ export default function OverviewScreen({ dashboard }) {
 
   return (
     <>
-      <section className="metric-grid">
-        <MetricCard
-          icon={Factory}
-          label="10-month production"
-          value={formatNumber(monthlyProduction.totalProduction)}
-          detail={`Avg ${formatNumber(monthlyProduction.averageProduction)}`}
-        />
-        <MetricCard
-          icon={Zap}
-          label="10-month power"
-          value={formatNumber(monthlyPowerConsumption.totalPower)}
-          detail={`Latest ${formatNumber(latestPower)}`}
-        />
-        <MetricCard
-          icon={CalendarDays}
-          label="Current month"
-          value={formatNumber(dailyProduction.totalProduction)}
-          detail={`${activeDailyRows.length} active day(s)`}
-        />
-        <MetricCard
-          icon={Zap}
-          label="Current month power"
-          value={formatNumber(dailyPowerConsumption.totalPower)}
-          detail={`${activeDailyPowerRows.length} active day(s)`}
-        />
-        <MetricCard
-          icon={Activity}
-          label="Readings today"
-          value={stats.todayReadings ?? 0}
-          detail={`${dashboard?.recentReadings?.length ?? 0} recent loaded`}
-        />
-      </section>
-
       <section className="chart-grid">
-        <ChartPanel
-          title={`${dailyPowerConsumption.monthLabel || 'Current Month'} Power Consumption`}
-          icon={Zap}
-          summaryLabel="Current Month Power"
-          summaryValue={formatNumber(dailyPowerConsumption.totalPower)}
-          summaryHint={`${activeDailyPowerRows.length} active day(s)`}
-          {...zoomProps(dailyPowerZoom, setDailyPowerZoom)}
-        >
-          <StackedPowerChart rows={dailyPowerConsumption.rows} zoomLevel={dailyPowerZoom} daily />
-        </ChartPanel>
-
-        <ChartPanel
-          title="Monthly Power Consumption"
-          icon={Zap}
-          summaryLabel="Total Power"
-          summaryValue={formatNumber(monthlyPowerConsumption.totalPower)}
-          summaryHint="Latest 10 months"
-          {...zoomProps(powerZoom, setPowerZoom)}
-        >
-          <StackedPowerChart rows={monthlyPowerConsumption.rows} zoomLevel={powerZoom} />
-        </ChartPanel>
-
-        <ChartPanel
-          title={`${dailyProduction.monthLabel || 'Current Month'} Production`}
-          icon={Gauge}
-          summaryLabel="Current Month"
-          summaryValue={formatNumber(dailyProduction.totalProduction)}
-          summaryHint={`${activeDailyRows.length} active day(s)`}
-          {...zoomProps(dailyProductionZoom, setDailyProductionZoom)}
-        >
-          <SimpleBarChart
-            rows={dailyProduction.rows}
-            valueKey="production"
-            emptyMessage="Daily production will appear after current-month totalizer values are saved."
-            zoomLevel={dailyProductionZoom}
-            daily
-          />
-        </ChartPanel>
-
         <ChartPanel
           title="Monthly Production"
           icon={BarChart3}
@@ -364,13 +521,58 @@ export default function OverviewScreen({ dashboard }) {
             zoomLevel={monthlyProductionZoom}
           />
         </ChartPanel>
-      </section>
 
-      <ReadingsScreen
-        title="Recent Readings"
-        meta={`${stats.totalSites ?? 0} sites`}
-        readings={dashboard?.recentReadings ?? []}
-      />
+        <ChartPanel
+          title={`${dailyProduction.monthLabel || 'Current Month'} Production`}
+          icon={CalendarDays}
+          summaryLabel="Current Month"
+          summaryValue={formatNumber(dailyProduction.totalProduction)}
+          summaryHint={`${activeDailyRows.length} active day(s)`}
+          {...zoomProps(dailyProductionZoom, setDailyProductionZoom)}
+        >
+          <SimpleBarChart
+            rows={dailyProduction.rows}
+            valueKey="production"
+            emptyMessage="Daily production will appear after current-month totalizer values are saved."
+            zoomLevel={dailyProductionZoom}
+            daily
+          />
+        </ChartPanel>
+
+        <ChartPanel
+          title="Monthly Power Consumption"
+          icon={Zap}
+          summaryLabel="Total Power"
+          summaryValue={formatNumber(monthlyPowerConsumption.totalPower)}
+          summaryHint="Latest 10 months"
+          {...zoomProps(powerZoom, setPowerZoom)}
+        >
+          <StackedPowerChart rows={monthlyPowerConsumption.rows} zoomLevel={powerZoom} />
+        </ChartPanel>
+
+        <ChartPanel
+          title="Monthly Chemical Usage"
+          icon={FlaskConical}
+          summaryItems={[
+            {
+              label: 'Total Chlorine',
+              value: formatNumber(monthlyChemicalUsage.totalChlorine),
+              hint: 'Latest 10 months',
+              icon: Droplets,
+            },
+            {
+              label: 'Total Peroxide',
+              value: formatNumber(monthlyChemicalUsage.totalPeroxide),
+              hint: 'Latest 10 months',
+              icon: FlaskConical,
+            },
+          ]}
+          {...zoomProps(chemicalZoom, setChemicalZoom)}
+        >
+          <StackedChemicalChart rows={monthlyChemicalUsage.rows} zoomLevel={chemicalZoom} />
+        </ChartPanel>
+        <RecentReadingsPanel readings={dashboard?.recentReadings ?? []} />
+      </section>
     </>
   );
 }

@@ -31,7 +31,7 @@ export function parseProductionNumber(value) {
     return null;
   }
 
-  const parsed = Number(value);
+  const parsed = typeof value === 'string' ? Number(value.replace(/,/g, '')) : Number(value);
   return Number.isFinite(parsed) ? parsed : null;
 }
 
@@ -433,6 +433,52 @@ export function buildMonthlyPowerConsumption({ chlorinationReadings = [], deepwe
 
   return {
     totalPower,
+    rows,
+  };
+}
+
+export function buildMonthlyChemicalUsage(chlorinationReadings = [], options = {}) {
+  const { now = new Date(), monthCount = DEFAULT_MONTHLY_PRODUCTION_MONTH_COUNT } = options;
+  const { firstVisibleMonth, rowsByMonth } = createMonthlyRows({ now, monthCount });
+  const visibleFromDate = createDayKey(firstVisibleMonth);
+  const visibleToDate = createDayKey(now);
+  const chemicalRows = aggregateDailyRows(
+    chlorinationReadings,
+    [
+      { key: 'chlorine', field: 'chlorine_consumed', aggregate: 'sum' },
+      { key: 'peroxide', field: 'peroxide_consumption', aggregate: 'sum' },
+    ],
+    { visibleFromDate, visibleToDate }
+  );
+
+  rowsByMonth.forEach((row) => {
+    row.chlorineUsage = 0;
+    row.peroxideUsage = 0;
+  });
+
+  addDailyAggregateToMonthlyRows({
+    rowsByMonth,
+    rows: chemicalRows,
+    valueKey: 'chlorine',
+    targetKey: 'chlorineUsage',
+  });
+  addDailyAggregateToMonthlyRows({
+    rowsByMonth,
+    rows: chemicalRows,
+    valueKey: 'peroxide',
+    targetKey: 'peroxideUsage',
+  });
+
+  const rows = Array.from(rowsByMonth.values())
+    .map((row) => ({
+      ...row,
+      totalUsage: row.chlorineUsage + row.peroxideUsage,
+    }))
+    .sort((a, b) => b.key.localeCompare(a.key));
+
+  return {
+    totalChlorine: rows.reduce((sum, row) => sum + row.chlorineUsage, 0),
+    totalPeroxide: rows.reduce((sum, row) => sum + row.peroxideUsage, 0),
     rows,
   };
 }

@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import { BarChart3, CheckCircle2, Droplets, Loader2, LogOut, RefreshCw, Users } from 'lucide-react';
 import AccountsScreen from './AccountsScreen';
 import ApprovalsScreen from './ApprovalsScreen';
@@ -38,10 +39,16 @@ export default function DashboardScreen({
 }) {
   const tabs = getTabs(isAdmin);
   const recentReadings = dashboard?.recentReadings ?? [];
+  const [readingType, setReadingType] = useState('CHLORINATION');
 
   function renderActiveView() {
     if (activeView === 'readings') {
-      return <ReadingsScreen readings={recentReadings} />;
+      return (
+        <ReadingsScreen
+          readings={recentReadings}
+          selectedTableMode={readingType}
+        />
+      );
     }
 
     if (activeView === 'approvals' && isAdmin) {
@@ -82,15 +89,34 @@ export default function DashboardScreen({
           {tabs.map((tab) => {
             const Icon = tab.icon;
             return (
-              <button
-                key={tab.key}
-                className={activeView === tab.key ? 'active' : ''}
-                type="button"
-                onClick={() => onNavigate(tab.key)}
-              >
-                <Icon size={17} />
-                {tab.label}
-              </button>
+              <div className="tab-group" key={tab.key}>
+                <button
+                  className={activeView === tab.key ? 'active' : ''}
+                  type="button"
+                  onClick={() => onNavigate(tab.key)}
+                >
+                  <Icon size={17} />
+                  {tab.label}
+                </button>
+                {tab.key === 'readings' && activeView === 'readings' ? (
+                  <div className="tabs-subnav">
+                    <button
+                      type="button"
+                      className={readingType === 'CHLORINATION' ? 'active' : ''}
+                      onClick={() => setReadingType('CHLORINATION')}
+                    >
+                      Chlorination
+                    </button>
+                    <button
+                      type="button"
+                      className={readingType === 'DEEPWELL' ? 'active' : ''}
+                      onClick={() => setReadingType('DEEPWELL')}
+                    >
+                      Deepwell
+                    </button>
+                  </div>
+                ) : null}
+              </div>
             );
           })}
         </nav>
