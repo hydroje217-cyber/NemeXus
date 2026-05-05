@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Activity, BarChart3, CalendarDays, Factory, Gauge, Minus, Plus, RotateCcw, Zap } from 'lucide-react';
+import { BarChart3, Gauge, Minus, Plus, RotateCcw, Zap } from 'lucide-react';
 import {
   Bar,
   BarChart as RechartsBarChart,
@@ -11,7 +11,6 @@ import {
   XAxis,
   YAxis,
 } from 'recharts';
-import ReadingsScreen from './ReadingsScreen';
 
 const MIN_CHART_ZOOM = 0.75;
 const MAX_CHART_ZOOM = 2;
@@ -27,23 +26,6 @@ function formatNumber(value, decimals = 2) {
     minimumFractionDigits: decimals,
     maximumFractionDigits: decimals,
   });
-}
-
-function MetricCard({ icon: Icon, label, value, detail }) {
-  return (
-    <section className="metric-card">
-      <div className="metric-heading">
-        <span className="metric-icon">
-          <Icon size={17} />
-        </span>
-        <p>{label}</p>
-      </div>
-      <div>
-        <strong>{value}</strong>
-        {detail ? <span>{detail}</span> : null}
-      </div>
-    </section>
-  );
 }
 
 function clampZoom(value) {
@@ -161,7 +143,7 @@ function StackSegmentLabel({ x, y, width, height, value, fill }) {
 }
 
 function SimpleBarChart({ rows, valueKey, emptyMessage, zoomLevel, daily = false }) {
-  const visibleRows = [...(rows ?? [])].reverse();
+  const visibleRows = rows ?? [];
   const chartRows = visibleRows.map((row) => ({
     label: row.label,
     value: Number(row[valueKey]) || 0,
@@ -204,7 +186,7 @@ function SimpleBarChart({ rows, valueKey, emptyMessage, zoomLevel, daily = false
 }
 
 function StackedPowerChart({ rows, zoomLevel, daily = false }) {
-  const visibleRows = [...(rows ?? [])].reverse();
+  const visibleRows = rows ?? [];
   const chartRows = visibleRows.map((row) => ({
     label: row.label,
     chlorinationPower: Number(row.chlorinationPower) || 0,
@@ -258,15 +240,10 @@ export default function OverviewScreen({ dashboard }) {
   const [powerZoom, setPowerZoom] = useState(1);
   const [monthlyProductionZoom, setMonthlyProductionZoom] = useState(1);
   const [dailyProductionZoom, setDailyProductionZoom] = useState(1);
-  const [dailyPowerZoom, setDailyPowerZoom] = useState(1);
-  const stats = dashboard?.stats ?? {};
   const monthlyProduction = dashboard?.monthlyProduction ?? { totalProduction: 0, averageProduction: 0, rows: [] };
   const dailyProduction = dashboard?.dailyProduction ?? { monthLabel: '', totalProduction: 0, rows: [] };
   const monthlyPowerConsumption = dashboard?.monthlyPowerConsumption ?? { totalPower: 0, rows: [] };
-  const dailyPowerConsumption = dashboard?.dailyPowerConsumption ?? { monthLabel: '', totalPower: 0, rows: [] };
   const activeDailyRows = dailyProduction.rows.filter((row) => Number(row.production) > 0);
-  const activeDailyPowerRows = dailyPowerConsumption.rows.filter((row) => Number(row.totalPower) > 0);
-  const latestPower = monthlyPowerConsumption.rows[0]?.totalPower ?? 0;
   const zoomProps = (zoomLevel, setZoomLevel) => ({
     zoomLevel,
     onZoomIn: () => setZoomLevel((current) => clampZoom(current + CHART_ZOOM_STEP)),
@@ -276,51 +253,7 @@ export default function OverviewScreen({ dashboard }) {
 
   return (
     <>
-      <section className="metric-grid">
-        <MetricCard
-          icon={Factory}
-          label="10-month production"
-          value={formatNumber(monthlyProduction.totalProduction)}
-          detail={`Avg ${formatNumber(monthlyProduction.averageProduction)}`}
-        />
-        <MetricCard
-          icon={Zap}
-          label="10-month power"
-          value={formatNumber(monthlyPowerConsumption.totalPower)}
-          detail={`Latest ${formatNumber(latestPower)}`}
-        />
-        <MetricCard
-          icon={CalendarDays}
-          label="Current month"
-          value={formatNumber(dailyProduction.totalProduction)}
-          detail={`${activeDailyRows.length} active day(s)`}
-        />
-        <MetricCard
-          icon={Zap}
-          label="Current month power"
-          value={formatNumber(dailyPowerConsumption.totalPower)}
-          detail={`${activeDailyPowerRows.length} active day(s)`}
-        />
-        <MetricCard
-          icon={Activity}
-          label="Readings today"
-          value={stats.todayReadings ?? 0}
-          detail={`${dashboard?.recentReadings?.length ?? 0} recent loaded`}
-        />
-      </section>
-
       <section className="chart-grid">
-        <ChartPanel
-          title={`${dailyPowerConsumption.monthLabel || 'Current Month'} Power Consumption`}
-          icon={Zap}
-          summaryLabel="Current Month Power"
-          summaryValue={formatNumber(dailyPowerConsumption.totalPower)}
-          summaryHint={`${activeDailyPowerRows.length} active day(s)`}
-          {...zoomProps(dailyPowerZoom, setDailyPowerZoom)}
-        >
-          <StackedPowerChart rows={dailyPowerConsumption.rows} zoomLevel={dailyPowerZoom} daily />
-        </ChartPanel>
-
         <ChartPanel
           title="Monthly Power Consumption"
           icon={Zap}
@@ -365,12 +298,6 @@ export default function OverviewScreen({ dashboard }) {
           />
         </ChartPanel>
       </section>
-
-      <ReadingsScreen
-        title="Recent Readings"
-        meta={`${stats.totalSites ?? 0} sites`}
-        readings={dashboard?.recentReadings ?? []}
-      />
     </>
   );
 }

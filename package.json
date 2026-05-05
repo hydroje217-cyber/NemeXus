@@ -1,0 +1,11 @@
+{
+  "name": "nemexus-workspace",
+  "private": true,
+  "scripts": {
+    "start": "npm --prefix manager-dashboard start",
+    "dev": "npm --prefix manager-dashboard run dev",
+    "web": "npm --prefix manager-dashboard run web",
+    "build": "npm --prefix manager-dashboard run build",
+    "audit:web": "npm --prefix manager-dashboard audit --omit=dev"
+  }
+}
