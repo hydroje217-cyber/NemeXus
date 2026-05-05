@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { CalendarDays, ChevronDown, ChevronUp, Droplet, FileText, Filter, Grid2X2, List, RefreshCw, Table2, Zap } from 'lucide-react';
+import { CalendarDays, ChevronDown, ChevronUp, FileText, Filter, Grid2X2, List, RefreshCw, Table2 } from 'lucide-react';
 import JSZip from 'jszip';
 import { jsPDF } from 'jspdf';
 import autoTable from 'jspdf-autotable';
@@ -236,18 +236,18 @@ function ExportMenu({ format, open, onToggle, onSelect }) {
   );
 }
 
-export default function ReadingsScreen() {
-  const [tableMode, setTableMode] = useState(CHLORINATION);
+export default function ReadingsScreen({ selectedTableMode = CHLORINATION }) {
+  const [tableMode, setTableMode] = useState(selectedTableMode);
   const [fromDate, setFromDate] = useState('');
   const [toDate, setToDate] = useState('');
-  const [limit, setLimit] = useState('50');
+  const [limit, setLimit] = useState('8');
   const [items, setItems] = useState([]);
   const [dailyAverageRows, setDailyAverageRows] = useState([]);
   const [loading, setLoading] = useState(false);
   const [exporting, setExporting] = useState(false);
   const [exportFormat, setExportFormat] = useState('csv');
   const [exportOpen, setExportOpen] = useState(false);
-  const [visibleTable, setVisibleTable] = useState('averages');
+  const [visibleTable, setVisibleTable] = useState('records');
   const [message, setMessage] = useState('');
 
   const chlorinationColumns = useMemo(
@@ -351,7 +351,7 @@ export default function ReadingsScreen() {
     const effectiveFromDate = nextFilters.fromDate ?? fromDate;
     const effectiveToDate = nextFilters.toDate ?? toDate;
     const effectiveLimit = nextFilters.limit ?? limit;
-    const safeLimit = Math.min(200, Math.max(1, Number(effectiveLimit) || 50));
+    const safeLimit = Math.min(200, Math.max(1, Number(effectiveLimit) || 8));
 
     if (effectiveFromDate && effectiveToDate && effectiveFromDate > effectiveToDate) {
       setItems([]);
@@ -400,19 +400,20 @@ export default function ReadingsScreen() {
   }
 
   useEffect(() => {
-    loadHistory();
-  }, []);
+    if (selectedTableMode !== tableMode) {
+      setTableMode(selectedTableMode);
+    }
+  }, [selectedTableMode]);
 
-  async function handleModeChange(nextMode) {
-    setTableMode(nextMode);
-    await loadHistory({ tableMode: nextMode });
-  }
+  useEffect(() => {
+    loadHistory();
+  }, [tableMode]);
 
   async function handleReset() {
     setFromDate('');
     setToDate('');
-    setLimit('50');
-    await loadHistory({ fromDate: '', toDate: '', limit: '50' });
+    setLimit('8');
+    await loadHistory({ fromDate: '', toDate: '', limit: '8' });
   }
 
   async function handleExport() {
@@ -472,7 +473,7 @@ export default function ReadingsScreen() {
         <header className="readings-filter-header">
           <div>
             <span className="readings-filter-icon">
-              <Filter size={20} />
+              <Filter size={10} />
             </span>
             <h3>Office filters</h3>
           </div>
@@ -482,18 +483,23 @@ export default function ReadingsScreen() {
         </header>
 
         <div className="readings-form-grid">
-          <div className="readings-field full">
-            <span>Table view</span>
-            <div className="segmented-control">
-              <button type="button" className={tableMode === CHLORINATION ? 'active' : ''} onClick={() => handleModeChange(CHLORINATION)}>
-                <Droplet size={17} />
-                Chlorination
-              </button>
-              <button type="button" className={tableMode === DEEPWELL ? 'active' : ''} onClick={() => handleModeChange(DEEPWELL)}>
-                <Zap size={17} />
-                Deepwell
-              </button>
-            </div>
+          <div className="readings-table-toggle in-filters" aria-label="Reading table display">
+            <button
+              type="button"
+              className={visibleTable === 'averages' ? 'active' : ''}
+              onClick={() => setVisibleTable('averages')}
+            >
+              <Table2 size={17} />
+              Daily average rows
+            </button>
+            <button
+              type="button"
+              className={visibleTable === 'records' ? 'active' : ''}
+              onClick={() => setVisibleTable('records')}
+            >
+              <List size={17} />
+              {tableMode === CHLORINATION ? 'Chlorination records' : 'Deepwell records'}
+            </button>
           </div>
 
           <label className="readings-field">
@@ -546,40 +552,8 @@ export default function ReadingsScreen() {
 
       {message ? <p className="readings-message">{message}</p> : null}
 
-      <div className="readings-table-toggle" aria-label="Reading table display">
-        <button
-          type="button"
-          className={visibleTable === 'averages' ? 'active' : ''}
-          onClick={() => setVisibleTable('averages')}
-        >
-          <Table2 size={17} />
-          Daily average rows
-        </button>
-        <button
-          type="button"
-          className={visibleTable === 'records' ? 'active' : ''}
-          onClick={() => setVisibleTable('records')}
-        >
-          <List size={17} />
-          {tableMode === CHLORINATION ? 'Chlorination records' : 'Deepwell records'}
-        </button>
-      </div>
-
       {visibleTable === 'averages' ? (
         <>
-          <section className="readings-info-card">
-            <span className="readings-filter-icon">
-              <Table2 size={20} />
-            </span>
-            <div>
-              <h3>Daily average values</h3>
-              <p>
-                Averages are calculated per day from all matching 30-minute readings in the selected date range.
-                Totalizer and power consumption use the current day's last reading minus the previous day's last reading.
-              </p>
-            </div>
-          </section>
-
           <section className="panel">
             <div className="panel-heading">
               <h3>Daily average table</h3>
