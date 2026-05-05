@@ -1,10 +1,15 @@
-import { useEffect, useMemo, useState } from 'react';
-import { ActivityIndicator, Pressable, StyleSheet, Text, View, useWindowDimensions } from 'react-native';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { ActivityIndicator, Animated, Platform, Pressable, Share, StyleSheet, Text, View, useWindowDimensions } from 'react-native';
 import Ionicons from '@expo/vector-icons/Ionicons';
+import * as FileSystem from 'expo-file-system/legacy';
+import * as Print from 'expo-print';
+import * as Sharing from 'expo-sharing';
+import * as XLSX from 'xlsx';
 import { BarChart } from 'react-native-gifted-charts';
 import Card from '../components/Card';
 import MessageBanner from '../components/MessageBanner';
 import ScreenShell from '../components/ScreenShell';
+import { useAuth } from '../context/AuthContext';
 import { useTheme } from '../context/ThemeContext';
 import { getOfficeDashboardSnapshot } from '../services/office';
 
@@ -20,6 +25,154 @@ function formatNumber(value, decimals = 2) {
   });
 }
 
+function roundExportNumber(value, decimals = 2) {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) {
+    return 0;
+  }
+
+  return Number(parsed.toFixed(decimals));
+}
+
+function displayExportValue(value) {
+  if (typeof value === 'number') {
+    return formatNumber(value, 2);
+  }
+
+  return value === null || value === undefined || value === '' ? '-' : String(value);
+}
+
+function escapeHtml(value) {
+  return String(value ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+function buildExportFileName(extension) {
+  const stamp = new Date().toISOString().slice(0, 10);
+  return `monthly-analytics-${stamp}.${extension}`;
+}
+
+function sortExportRows(rows = []) {
+  return [...rows].sort((a, b) => String(a.key || '').localeCompare(String(b.key || '')));
+}
+
+function buildSheetRows(columns, rows) {
+  return [
+    columns.map((column) => column.label),
+    ...rows.map((row) => columns.map((column) => column.render(row))),
+  ];
+}
+
+function buildAnalyticsExportSections({ monthlyProduction, monthlyPowerConsumption, monthlyChemicalUsage }) {
+  const productionRows = sortExportRows(monthlyProduction?.rows);
+  const powerRows = sortExportRows(monthlyPowerConsumption?.rows);
+  const chemicalRows = sortExportRows(monthlyChemicalUsage?.rows);
+
+  return [
+    {
+      title: 'Summary',
+      sheetName: 'Summary',
+      columns: [
+        { label: 'Metric', render: (row) => row.metric },
+        { label: 'Value', render: (row) => roundExportNumber(row.value) },
+      ],
+      rows: [
+        { metric: 'Total Production', value: monthlyProduction?.totalProduction ?? 0 },
+        { metric: 'Total Power', value: monthlyPowerConsumption?.totalPower ?? 0 },
+        { metric: 'Total Chlorine', value: monthlyChemicalUsage?.totalChlorine ?? 0 },
+        { metric: 'Total Peroxide', value: monthlyChemicalUsage?.totalPeroxide ?? 0 },
+      ],
+    },
+    {
+      title: 'Monthly Production',
+      sheetName: 'Production',
+      columns: [
+        { label: 'Month', render: (row) => row.label },
+        { label: 'Production', render: (row) => roundExportNumber(row.production) },
+      ],
+      rows: productionRows,
+    },
+    {
+      title: 'Monthly Power Usage',
+      sheetName: 'Power Usage',
+      columns: [
+        { label: 'Month', render: (row) => row.label },
+        { label: 'Chlorination Power', render: (row) => roundExportNumber(row.chlorinationPower) },
+        { label: 'Deepwell Power', render: (row) => roundExportNumber(row.deepwellPower) },
+        { label: 'Total Power', render: (row) => roundExportNumber(row.totalPower) },
+      ],
+      rows: powerRows,
+    },
+    {
+      title: 'Monthly Chemical Usage',
+      sheetName: 'Chemical Usage',
+      columns: [
+        { label: 'Month', render: (row) => row.label },
+        { label: 'Chlorine', render: (row) => roundExportNumber(row.chlorineUsage) },
+        { label: 'Peroxide', render: (row) => roundExportNumber(row.peroxideUsage) },
+        { label: 'Total Chemical', render: (row) => roundExportNumber(row.totalUsage) },
+      ],
+      rows: chemicalRows,
+    },
+  ];
+}
+
+function buildPdfSection(section) {
+  const head = section.columns.map((column) => `<th>${escapeHtml(column.label)}</th>`).join('');
+  const body = section.rows
+    .map((row) => {
+      const cells = section.columns
+        .map((column) => `<td>${escapeHtml(displayExportValue(column.render(row)))}</td>`)
+        .join('');
+
+      return `<tr>${cells}</tr>`;
+    })
+    .join('');
+
+  return `
+    <section>
+      <h2>${escapeHtml(section.title)}</h2>
+      <table>
+        <thead><tr>${head}</tr></thead>
+        <tbody>${body}</tbody>
+      </table>
+    </section>
+  `;
+}
+
+function buildAnalyticsPdfDocument(sections) {
+  const generatedAt = new Date().toLocaleString('en-US');
+
+  return `
+    <!DOCTYPE html>
+    <html>
+      <head>
+        <meta charset="utf-8" />
+        <style>
+          body { font-family: Helvetica, Arial, sans-serif; color: #0f172a; padding: 24px; }
+          h1 { margin: 0 0 6px; font-size: 24px; }
+          .meta { margin: 0 0 18px; color: #475569; font-size: 12px; }
+          section { margin-top: 20px; page-break-inside: avoid; }
+          h2 { margin: 0 0 10px; font-size: 16px; }
+          table { width: 100%; border-collapse: collapse; table-layout: fixed; font-size: 10px; }
+          th, td { border: 1px solid #cbd5e1; padding: 7px; vertical-align: top; word-wrap: break-word; }
+          th { background: #0f766e; color: #ffffff; font-weight: 700; }
+          tr:nth-child(even) td { background: #f8fafc; }
+        </style>
+      </head>
+      <body>
+        <h1>Monthly Analytics Export</h1>
+        <p class="meta">Generated: ${escapeHtml(generatedAt)}</p>
+        ${sections.map(buildPdfSection).join('')}
+      </body>
+    </html>
+  `;
+}
+
 function SectionHeader({ title, body, iconName = 'bar-chart-outline', iconColor, styles }) {
   return (
     <View style={styles.sectionHeader}>
@@ -30,6 +183,94 @@ function SectionHeader({ title, body, iconName = 'bar-chart-outline', iconColor,
         <Text style={styles.sectionTitle}>{title}</Text>
       </View>
       {body ? <Text style={styles.sectionBody}>{body}</Text> : null}
+    </View>
+  );
+}
+
+function GraphSkeletonCard({ styles, cardStyle, isDaily = false, isSplit = false }) {
+  const pulseOpacity = useRef(new Animated.Value(0.55)).current;
+  const barHeights = isDaily
+    ? [88, 132, 104, 156, 118, 178, 142, 96, 164, 124, 148, 108]
+    : [96, 140, 118, 168, 132, 188, 150, 112, 176, 136];
+
+  useEffect(() => {
+    const animation = Animated.loop(
+      Animated.sequence([
+        Animated.timing(pulseOpacity, {
+          toValue: 1,
+          duration: 700,
+          useNativeDriver: true,
+        }),
+        Animated.timing(pulseOpacity, {
+          toValue: 0.55,
+          duration: 700,
+          useNativeDriver: true,
+        }),
+      ])
+    );
+
+    animation.start();
+    return () => animation.stop();
+  }, [pulseOpacity]);
+
+  const skeletonStyle = (style) => [
+    styles.skeletonBlock,
+    ...(Array.isArray(style) ? style : [style]),
+    { opacity: pulseOpacity },
+  ];
+
+  return (
+    <Card style={[styles.panelCard, cardStyle]}>
+      <View style={styles.skeletonHeaderRow}>
+        <Animated.View style={skeletonStyle(styles.skeletonIcon)} />
+        <Animated.View style={skeletonStyle(styles.skeletonTitleLine)} />
+      </View>
+
+      <View style={styles.skeletonMetaRow}>
+        <Animated.View style={skeletonStyle(styles.skeletonSummaryPill)} />
+        <Animated.View style={skeletonStyle(styles.skeletonToolbarPill)} />
+      </View>
+
+      <View style={[styles.skeletonChartArea, isDaily && styles.skeletonChartAreaTall]}>
+        <View style={styles.skeletonAxisColumn}>
+          {[0, 1, 2, 3].map((item) => (
+            <Animated.View key={item} style={skeletonStyle(styles.skeletonAxisTick)} />
+          ))}
+        </View>
+        <View style={styles.skeletonBarsRow}>
+          {barHeights.map((height, index) => (
+            <View key={`${height}-${index}`} style={styles.skeletonBarSlot}>
+              {isSplit ? (
+                <>
+                  <Animated.View style={skeletonStyle([styles.skeletonBarSegmentTop, { height: Math.round(height * 0.42) }])} />
+                  <Animated.View style={skeletonStyle([styles.skeletonBarSegmentBottom, { height: Math.round(height * 0.58) }])} />
+                </>
+              ) : (
+                <Animated.View style={skeletonStyle([styles.skeletonBar, { height }])} />
+              )}
+              <Animated.View style={skeletonStyle(styles.skeletonBarLabel)} />
+            </View>
+          ))}
+        </View>
+      </View>
+
+      <View style={styles.skeletonLegendRow}>
+        <Animated.View style={skeletonStyle(styles.skeletonLegendItem)} />
+        {isSplit ? <Animated.View style={skeletonStyle(styles.skeletonLegendItem)} /> : null}
+      </View>
+    </Card>
+  );
+}
+
+function GraphSkeletonGrid({ styles, useTwoColumnCharts }) {
+  const cardStyle = useTwoColumnCharts ? styles.chartGridCard : null;
+
+  return (
+    <View style={styles.chartGrid}>
+      <GraphSkeletonCard styles={styles} cardStyle={cardStyle} />
+      <GraphSkeletonCard styles={styles} cardStyle={cardStyle} isDaily />
+      <GraphSkeletonCard styles={styles} cardStyle={cardStyle} isSplit />
+      <GraphSkeletonCard styles={styles} cardStyle={cardStyle} isSplit />
     </View>
   );
 }
@@ -981,6 +1222,7 @@ function DailyProductionCard({ dailyProduction, palette, isDark, isWide, screenW
 
 export default function OfficeGraphsScreen({ navigation }) {
   const { palette, isDark } = useTheme();
+  const { profile } = useAuth();
   const styles = useMemo(() => createStyles(palette, isDark), [palette, isDark]);
   const { width } = useWindowDimensions();
   const isWide = width >= 980;
@@ -1006,8 +1248,10 @@ export default function OfficeGraphsScreen({ navigation }) {
     rows: [],
   });
   const [loading, setLoading] = useState(true);
+  const [exportingFormat, setExportingFormat] = useState('');
   const [message, setMessage] = useState('');
   const [tone, setTone] = useState('info');
+  const canExportAnalytics = profile?.role === 'manager' || profile?.role === 'supervisor';
 
   async function loadGraphs({ silent = false } = {}) {
     if (!silent) {
@@ -1036,6 +1280,128 @@ export default function OfficeGraphsScreen({ navigation }) {
     loadGraphs();
   }, []);
 
+  async function handleExportAnalytics(format) {
+    if (!canExportAnalytics) {
+      setTone('error');
+      setMessage('Only managers and supervisors can export analytics.');
+      return;
+    }
+
+    const sections = buildAnalyticsExportSections({
+      monthlyProduction,
+      monthlyPowerConsumption,
+      monthlyChemicalUsage,
+    });
+    const hasRows = sections.some((section) => section.title !== 'Summary' && section.rows.length);
+
+    if (!hasRows) {
+      setTone('info');
+      setMessage('Load monthly analytics data before exporting.');
+      return;
+    }
+
+    setExportingFormat(format);
+    setTone('info');
+    setMessage(`Preparing ${format.toUpperCase()} export...`);
+
+    try {
+      if (format === 'xlsx') {
+        const workbook = XLSX.utils.book_new();
+        sections.forEach((section) => {
+          const worksheet = XLSX.utils.aoa_to_sheet(buildSheetRows(section.columns, section.rows));
+          XLSX.utils.book_append_sheet(workbook, worksheet, section.sheetName);
+        });
+
+        const fileName = buildExportFileName('xlsx');
+
+        if (Platform.OS === 'web') {
+          const workbookArray = XLSX.write(workbook, { bookType: 'xlsx', type: 'array' });
+          const blob = new Blob(
+            [workbookArray],
+            { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }
+          );
+          const url = URL.createObjectURL(blob);
+          const link = document.createElement('a');
+          link.href = url;
+          link.setAttribute('download', fileName);
+          document.body.appendChild(link);
+          link.click();
+          document.body.removeChild(link);
+          URL.revokeObjectURL(url);
+        } else {
+          const exportDirectory = FileSystem.documentDirectory || FileSystem.cacheDirectory;
+
+          if (!exportDirectory) {
+            throw new Error('No writable device directory is available for Excel export.');
+          }
+
+          const fileUri = `${exportDirectory}${fileName}`;
+          const workbookBase64 = XLSX.write(workbook, { bookType: 'xlsx', type: 'base64' });
+          await FileSystem.writeAsStringAsync(fileUri, workbookBase64, {
+            encoding: FileSystem.EncodingType.Base64,
+          });
+
+          if (await Sharing.isAvailableAsync()) {
+            await Sharing.shareAsync(fileUri, {
+              mimeType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+              dialogTitle: 'Export monthly analytics Excel file',
+              UTI: 'org.openxmlformats.spreadsheetml.sheet',
+            });
+          } else {
+            await Share.share({
+              message: `Monthly analytics Excel file saved to ${fileUri}`,
+              title: fileName,
+              url: fileUri,
+            });
+          }
+        }
+      } else {
+        const fileName = buildExportFileName('pdf');
+        const html = buildAnalyticsPdfDocument(sections);
+
+        if (Platform.OS === 'web') {
+          const printWindow = window.open('', '_blank');
+
+          if (!printWindow) {
+            throw new Error('Unable to open a print window for PDF export.');
+          }
+
+          printWindow.document.write(html);
+          printWindow.document.close();
+          printWindow.focus();
+          printWindow.print();
+        } else {
+          const { uri: fileUri } = await Print.printToFileAsync({
+            html,
+            base64: false,
+          });
+
+          if (await Sharing.isAvailableAsync()) {
+            await Sharing.shareAsync(fileUri, {
+              mimeType: 'application/pdf',
+              dialogTitle: 'Export monthly analytics PDF',
+              UTI: 'com.adobe.pdf',
+            });
+          } else {
+            await Share.share({
+              message: `Monthly analytics PDF saved to ${fileUri}`,
+              title: fileName,
+              url: fileUri,
+            });
+          }
+        }
+      }
+
+      setTone('success');
+      setMessage(`${format.toUpperCase()} export is ready.`);
+    } catch (error) {
+      setTone('error');
+      setMessage(error.message || `Failed to export ${format.toUpperCase()}.`);
+    } finally {
+      setExportingFormat('');
+    }
+  }
+
   return (
     <ScreenShell
       eyebrow="Office analytics"
@@ -1053,11 +1419,11 @@ export default function OfficeGraphsScreen({ navigation }) {
 
         <Pressable
           onPress={() => loadGraphs()}
-          disabled={loading}
+          disabled={loading || Boolean(exportingFormat)}
           style={({ pressed }) => [
             styles.refreshPill,
-            pressed && !loading ? styles.pressed : null,
-            loading ? styles.disabledPill : null,
+            pressed && !loading && !exportingFormat ? styles.pressed : null,
+            loading || exportingFormat ? styles.disabledPill : null,
           ]}
         >
           {loading ? (
@@ -1069,12 +1435,48 @@ export default function OfficeGraphsScreen({ navigation }) {
         </Pressable>
       </View>
 
+      {canExportAnalytics ? (
+        <View style={styles.exportActionRow}>
+          <Pressable
+            onPress={() => handleExportAnalytics('pdf')}
+            disabled={loading || Boolean(exportingFormat)}
+            style={({ pressed }) => [
+              styles.exportPill,
+              pressed && !loading && !exportingFormat ? styles.pressed : null,
+              loading || exportingFormat ? styles.disabledPill : null,
+            ]}
+          >
+            {exportingFormat === 'pdf' ? (
+              <ActivityIndicator size="small" color={palette.ink900} />
+            ) : (
+              <Ionicons name="document-attach-outline" size={13} color={palette.ink900} />
+            )}
+            <Text style={styles.exportPillText}>{exportingFormat === 'pdf' ? 'Exporting PDF...' : 'Export PDF'}</Text>
+          </Pressable>
+
+          <Pressable
+            onPress={() => handleExportAnalytics('xlsx')}
+            disabled={loading || Boolean(exportingFormat)}
+            style={({ pressed }) => [
+              styles.exportPill,
+              pressed && !loading && !exportingFormat ? styles.pressed : null,
+              loading || exportingFormat ? styles.disabledPill : null,
+            ]}
+          >
+            {exportingFormat === 'xlsx' ? (
+              <ActivityIndicator size="small" color={palette.ink900} />
+            ) : (
+              <Ionicons name="grid-outline" size={13} color={palette.ink900} />
+            )}
+            <Text style={styles.exportPillText}>{exportingFormat === 'xlsx' ? 'Exporting Excel...' : 'Export Excel'}</Text>
+          </Pressable>
+        </View>
+      ) : null}
+
       {message ? <MessageBanner tone={tone}>{message}</MessageBanner> : null}
 
       {loading ? (
-        <View style={styles.loadingWrap}>
-          <ActivityIndicator size="large" color={palette.teal600} />
-        </View>
+        <GraphSkeletonGrid styles={styles} useTwoColumnCharts={useTwoColumnCharts} />
       ) : (
         <View style={styles.chartGrid}>
           <MonthlyProductionCard
@@ -1166,6 +1568,31 @@ function createStyles(palette, isDark) {
       fontSize: 10,
       fontWeight: '800',
     },
+    exportActionRow: {
+      flexDirection: 'row',
+      flexWrap: 'wrap',
+      alignItems: 'center',
+      justifyContent: 'flex-end',
+      gap: 8,
+    },
+    exportPill: {
+      minHeight: 32,
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'center',
+      gap: 5,
+      borderWidth: 1,
+      borderColor: isDark ? '#31506E' : '#C9DDF3',
+      backgroundColor: isDark ? '#16304A' : '#EAF2FB',
+      paddingHorizontal: 10,
+      paddingVertical: 6,
+      borderRadius: 8,
+    },
+    exportPillText: {
+      color: palette.ink900,
+      fontSize: 10,
+      fontWeight: '800',
+    },
     disabledPill: {
       opacity: 0.65,
     },
@@ -1192,6 +1619,121 @@ function createStyles(palette, isDark) {
     panelCard: {
       gap: 12,
       padding: 12,
+    },
+    skeletonBlock: {
+      backgroundColor: isDark ? '#1C3346' : '#E5EEF6',
+      borderRadius: 8,
+    },
+    skeletonHeaderRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 8,
+    },
+    skeletonIcon: {
+      width: 24,
+      height: 24,
+      borderRadius: 999,
+    },
+    skeletonTitleLine: {
+      width: 170,
+      maxWidth: '72%',
+      height: 16,
+    },
+    skeletonMetaRow: {
+      flexDirection: 'row',
+      flexWrap: 'wrap',
+      alignItems: 'stretch',
+      justifyContent: 'space-between',
+      gap: 8,
+    },
+    skeletonSummaryPill: {
+      flexGrow: 1,
+      flexShrink: 1,
+      minWidth: 170,
+      height: 54,
+    },
+    skeletonToolbarPill: {
+      width: 150,
+      height: 54,
+    },
+    skeletonChartArea: {
+      minHeight: 292,
+      flexDirection: 'row',
+      gap: 10,
+      overflow: 'hidden',
+      borderWidth: 1,
+      borderColor: palette.line,
+      backgroundColor: isDark ? '#0B1723' : '#FBFDFF',
+      paddingHorizontal: 12,
+      paddingTop: 24,
+      paddingBottom: 16,
+      borderRadius: 8,
+    },
+    skeletonChartAreaTall: {
+      minHeight: 360,
+    },
+    skeletonAxisColumn: {
+      width: 36,
+      justifyContent: 'space-between',
+      paddingBottom: 28,
+    },
+    skeletonAxisTick: {
+      width: 28,
+      height: 8,
+      borderRadius: 4,
+    },
+    skeletonBarsRow: {
+      flex: 1,
+      minWidth: 0,
+      flexDirection: 'row',
+      alignItems: 'flex-end',
+      justifyContent: 'space-between',
+      gap: 8,
+    },
+    skeletonBarSlot: {
+      flex: 1,
+      minWidth: 12,
+      maxWidth: 34,
+      alignItems: 'center',
+      justifyContent: 'flex-end',
+      gap: 8,
+    },
+    skeletonBar: {
+      width: '100%',
+      maxWidth: 26,
+      borderRadius: 5,
+    },
+    skeletonBarSegmentTop: {
+      width: '100%',
+      maxWidth: 26,
+      borderTopLeftRadius: 5,
+      borderTopRightRadius: 5,
+      borderBottomLeftRadius: 2,
+      borderBottomRightRadius: 2,
+    },
+    skeletonBarSegmentBottom: {
+      width: '100%',
+      maxWidth: 26,
+      borderTopLeftRadius: 2,
+      borderTopRightRadius: 2,
+      borderBottomLeftRadius: 5,
+      borderBottomRightRadius: 5,
+    },
+    skeletonBarLabel: {
+      width: '80%',
+      height: 8,
+      borderRadius: 4,
+    },
+    skeletonLegendRow: {
+      flexDirection: 'row',
+      flexWrap: 'wrap',
+      justifyContent: 'center',
+      gap: 10,
+    },
+    skeletonLegendItem: {
+      width: 104,
+      height: 18,
+      borderRadius: 8,
     },
     sectionHeader: {
       gap: 3,

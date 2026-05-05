@@ -26,6 +26,10 @@ import { useTheme } from '../context/ThemeContext';
 import { listReadings } from '../services/readings';
 import { aggregateDailyRows } from '../utils/production';
 
+const DEFAULT_HISTORY_LIMIT = 50;
+const MAX_HISTORY_LIMIT = 200;
+const MAX_AVERAGE_SOURCE_LIMIT = 500;
+
 function formatDateValue(date) {
   if (!date) {
     return '';
@@ -45,6 +49,21 @@ function shiftDateValue(value, days) {
 
   parsed.setDate(parsed.getDate() + days);
   return formatDateValue(parsed);
+}
+
+function previousAndCurrentDayDateValues() {
+  const currentDay = new Date();
+  const previousDay = new Date(currentDay);
+  previousDay.setDate(currentDay.getDate() - 1);
+
+  return {
+    fromDate: formatDateValue(previousDay),
+    toDate: formatDateValue(currentDay),
+  };
+}
+
+function supportsDailyAverageMode(siteType) {
+  return siteType === 'CHLORINATION' || siteType === 'DEEPWELL';
 }
 
 function parseDateValue(value) {
@@ -483,9 +502,10 @@ export default function ReadingHistoryScreen({ navigation, site, source }) {
   const [tableMode, setTableMode] = useState(site?.type || 'CHLORINATION');
   const [fromDate, setFromDate] = useState('');
   const [toDate, setToDate] = useState('');
-  const [limit, setLimit] = useState('50');
+  const [limit, setLimit] = useState(String(DEFAULT_HISTORY_LIMIT));
   const [items, setItems] = useState([]);
   const [dailyAverageRows, setDailyAverageRows] = useState([]);
+  const [activeHistoryView, setActiveHistoryView] = useState('records');
   const [loading, setLoading] = useState(false);
   const [exporting, setExporting] = useState(false);
   const [exportFormat, setExportFormat] = useState('csv');
@@ -597,16 +617,22 @@ export default function ReadingHistoryScreen({ navigation, site, source }) {
       : resolvedTableMode === 'DEEPWELL'
         ? deepwellColumns
         : genericColumns;
+  const canShowDailyAverageView = supportsDailyAverageMode(resolvedTableMode);
 
   async function loadHistory(nextFilters) {
     setLoading(true);
     setMessage('');
 
     const effectiveTableMode = nextFilters?.tableMode ?? tableMode;
+    const effectiveHistoryView = nextFilters?.historyView ?? activeHistoryView;
     const effectiveFromDate = nextFilters?.fromDate ?? fromDate;
     const effectiveToDate = nextFilters?.toDate ?? toDate;
     const effectiveLimit = nextFilters?.limit ?? limit;
-    const safeLimit = isOfficeView ? Math.min(200, Math.max(1, Number(effectiveLimit) || 50)) : undefined;
+    const safeLimit = Math.min(MAX_HISTORY_LIMIT, Math.max(1, Number(effectiveLimit) || DEFAULT_HISTORY_LIMIT));
+    const averageSourceLimit = Math.min(MAX_AVERAGE_SOURCE_LIMIT, Math.max(safeLimit, DEFAULT_HISTORY_LIMIT));
+    const canLoadDailyAverages = supportsDailyAverageMode(effectiveTableMode);
+    const shouldLoadDailyAverages = canLoadDailyAverages && effectiveHistoryView === 'average';
+    const shouldLoadRecords = effectiveHistoryView === 'records' || !canLoadDailyAverages;
 
     if (effectiveFromDate && effectiveToDate && effectiveFromDate > effectiveToDate) {
       setItems([]);
@@ -616,11 +642,18 @@ export default function ReadingHistoryScreen({ navigation, site, source }) {
     }
 
     try {
+      const shouldUseSiteDefaultRange = !isOfficeView && !effectiveFromDate.trim() && !effectiveToDate.trim();
+      const siteDefaultRange = shouldUseSiteDefaultRange ? previousAndCurrentDayDateValues() : null;
       const filters = {
         siteId: site?.id || undefined,
         siteType: isOfficeView ? effectiveTableMode : undefined,
         fromDate: effectiveFromDate.trim() || undefined,
         toDate: effectiveToDate.trim() || undefined,
+      };
+      const recordsFilters = {
+        ...filters,
+        fromDate: siteDefaultRange?.fromDate || filters.fromDate,
+        toDate: siteDefaultRange?.toDate || filters.toDate,
       };
       const averagingFilters = {
         ...filters,
@@ -631,32 +664,43 @@ export default function ReadingHistoryScreen({ navigation, site, source }) {
       };
 
       const [nextItems, averagingItems] = await Promise.all([
-        listReadings({
-          ...filters,
-          limit: safeLimit,
-        }),
-        listReadings({
-          ...averagingFilters,
-          limit: undefined,
-        }),
+        shouldLoadRecords
+          ? listReadings({
+              ...recordsFilters,
+              limit: safeLimit,
+            })
+          : Promise.resolve([]),
+        shouldLoadDailyAverages
+          ? listReadings({
+              ...averagingFilters,
+              limit: averageSourceLimit,
+            })
+          : Promise.resolve([]),
       ]);
 
-      const averageRows =
-        effectiveTableMode === 'CHLORINATION'
+      const averageRows = (
+        shouldLoadDailyAverages && effectiveTableMode === 'CHLORINATION'
           ? aggregateDailyRows(averagingItems, chlorinationAverageFields, {
               visibleFromDate: filters.fromDate,
               visibleToDate: filters.toDate,
             })
-          : effectiveTableMode === 'DEEPWELL'
+          : shouldLoadDailyAverages && effectiveTableMode === 'DEEPWELL'
             ? aggregateDailyRows(averagingItems, deepwellAverageFields)
-            : [];
+            : []
+      ).sort((a, b) => String(b.date || '').localeCompare(String(a.date || '')));
 
       setItems(nextItems);
       setDailyAverageRows(averageRows);
       setMessage(
-        isOfficeView
-          ? `Showing ${nextItems.length} ${effectiveTableMode.toLowerCase()} record(s) and ${averageRows.length} daily average row(s).`
-          : `Showing all ${nextItems.length} record(s) for this site and ${averageRows.length} daily average row(s).`
+        isOfficeView && effectiveHistoryView === 'average'
+          ? `Showing ${averageRows.length} ${effectiveTableMode.toLowerCase()} Daily Average row(s).`
+          : isOfficeView
+            ? `Showing ${nextItems.length} ${effectiveTableMode.toLowerCase()} record(s).`
+          : shouldUseSiteDefaultRange
+            ? `Showing ${nextItems.length} record(s) from previous day and current day for this site.`
+            : effectiveHistoryView === 'average'
+              ? `Showing ${averageRows.length} daily average row(s) for this site.`
+              : `Showing latest ${nextItems.length} record(s) for this site.`
       );
     } catch (error) {
       setItems([]);
@@ -691,12 +735,12 @@ export default function ReadingHistoryScreen({ navigation, site, source }) {
   async function handleClearFilters() {
     setFromDate('');
     setToDate('');
-    setLimit('50');
+    setLimit(String(DEFAULT_HISTORY_LIMIT));
     await loadHistory({
       tableMode,
       fromDate: '',
       toDate: '',
-      limit: '50',
+      limit: String(DEFAULT_HISTORY_LIMIT),
     });
   }
 
@@ -965,6 +1009,7 @@ export default function ReadingHistoryScreen({ navigation, site, source }) {
                 active={tableMode === 'CHLORINATION'}
                 onPress={async () => {
                   setTableMode('CHLORINATION');
+                  setActiveHistoryView('records');
                   await loadHistory({ tableMode: 'CHLORINATION' });
                 }}
               />
@@ -974,6 +1019,7 @@ export default function ReadingHistoryScreen({ navigation, site, source }) {
                 active={tableMode === 'DEEPWELL'}
                 onPress={async () => {
                   setTableMode('DEEPWELL');
+                  setActiveHistoryView('records');
                   await loadHistory({ tableMode: 'DEEPWELL' });
                 }}
               />
@@ -1027,24 +1073,22 @@ export default function ReadingHistoryScreen({ navigation, site, source }) {
               </View>
             </View>
 
-            {isOfficeView ? (
-              <View style={[styles.filterField, styles.limitInlineField, isCompactFilters && styles.limitInlineFieldCompact]}>
-                <Text style={styles.filterLabel}>Limit</Text>
-                <View style={styles.inputShell}>
-                  <View style={styles.inputIconWrap}>
-                    <Ionicons name="list-outline" size={15} color={palette.ink500} />
-                  </View>
-                  <ScrollAwareTextInput
-                    value={limit}
-                    onChangeText={setLimit}
-                    keyboardType="number-pad"
-                    placeholder="50"
-                    placeholderTextColor={palette.ink500}
-                    style={styles.filterInput}
-                  />
+            <View style={[styles.filterField, styles.limitInlineField, isCompactFilters && styles.limitInlineFieldCompact]}>
+              <Text style={styles.filterLabel}>Limit</Text>
+              <View style={styles.inputShell}>
+                <View style={styles.inputIconWrap}>
+                  <Ionicons name="list-outline" size={15} color={palette.ink500} />
                 </View>
+                <ScrollAwareTextInput
+                  value={limit}
+                  onChangeText={setLimit}
+                  keyboardType="number-pad"
+                  placeholder="50"
+                  placeholderTextColor={palette.ink500}
+                  style={styles.filterInput}
+                />
               </View>
-            ) : null}
+            </View>
           </View>
         ) : (
           <View style={[styles.dateRangeRow, isCompactFilters && styles.dateRangeRowCompact]}>
@@ -1064,24 +1108,22 @@ export default function ReadingHistoryScreen({ navigation, site, source }) {
                 onPress={() => setPickerTarget('to')}
               />
             </View>
-            {isOfficeView ? (
-              <View style={[styles.filterField, styles.limitInlineField, isCompactFilters && styles.limitInlineFieldCompact]}>
-                <Text style={styles.filterLabel}>Limit</Text>
-                <View style={styles.inputShell}>
-                  <View style={styles.inputIconWrap}>
-                    <Ionicons name="list-outline" size={15} color={palette.ink500} />
-                  </View>
-                  <ScrollAwareTextInput
-                    value={limit}
-                    onChangeText={setLimit}
-                    keyboardType="number-pad"
-                    placeholder="50"
-                    placeholderTextColor={palette.ink500}
-                    style={styles.filterInput}
-                  />
+            <View style={[styles.filterField, styles.limitInlineField, isCompactFilters && styles.limitInlineFieldCompact]}>
+              <Text style={styles.filterLabel}>Limit</Text>
+              <View style={styles.inputShell}>
+                <View style={styles.inputIconWrap}>
+                  <Ionicons name="list-outline" size={15} color={palette.ink500} />
                 </View>
+                <ScrollAwareTextInput
+                  value={limit}
+                  onChangeText={setLimit}
+                  keyboardType="number-pad"
+                  placeholder="50"
+                  placeholderTextColor={palette.ink500}
+                  style={styles.filterInput}
+                />
               </View>
-            ) : null}
+            </View>
           </View>
         )}
 
@@ -1136,7 +1178,50 @@ export default function ReadingHistoryScreen({ navigation, site, source }) {
         </View>
       ) : (
         <View style={styles.resultsStack}>
-          {(resolvedTableMode === 'CHLORINATION' || resolvedTableMode === 'DEEPWELL') ? (
+          <View style={styles.historyViewTabs}>
+            {canShowDailyAverageView ? (
+              <Pressable
+                onPress={async () => {
+                  setActiveHistoryView('average');
+                  await loadHistory({ historyView: 'average' });
+                }}
+                style={[
+                  styles.historyViewTab,
+                  activeHistoryView === 'average' && styles.historyViewTabActive,
+                ]}
+              >
+                <Ionicons
+                  name="calculator-outline"
+                  size={13}
+                  color={activeHistoryView === 'average' ? palette.onAccent : palette.ink700}
+                />
+                <Text style={[styles.historyViewTabText, activeHistoryView === 'average' && styles.historyViewTabTextActive]}>
+                  Daily Average Records
+                </Text>
+              </Pressable>
+            ) : null}
+            <Pressable
+              onPress={async () => {
+                setActiveHistoryView('records');
+                await loadHistory({ historyView: 'records' });
+              }}
+              style={[
+                styles.historyViewTab,
+                activeHistoryView === 'records' && styles.historyViewTabActive,
+              ]}
+            >
+              <Ionicons
+                name="reader-outline"
+                size={13}
+                color={activeHistoryView === 'records' ? palette.onAccent : palette.ink700}
+              />
+              <Text style={[styles.historyViewTabText, activeHistoryView === 'records' && styles.historyViewTabTextActive]}>
+                Daily Records
+              </Text>
+            </Pressable>
+          </View>
+
+          {canShowDailyAverageView && activeHistoryView === 'average' ? (
             <>
               <Card style={styles.averageIntroCard}>
                 <View style={styles.averageIntroHeader}>
@@ -1146,7 +1231,7 @@ export default function ReadingHistoryScreen({ navigation, site, source }) {
                   <Text style={styles.averageIntroTitle}>Daily average values</Text>
                 </View>
                 <Text style={styles.averageIntroBody}>
-                  Averages are calculated per day from all matching 30-minute readings in the selected date range. Totalizer and power consumption use the current day's last reading minus the previous day's last reading.
+                  Averages are calculated per day from the loaded records to keep history fast with large datasets. Increase the limit or narrow the date range for a wider sample.
                 </Text>
               </Card>
 
@@ -1162,21 +1247,25 @@ export default function ReadingHistoryScreen({ navigation, site, source }) {
             </>
           ) : null}
 
-          <View style={styles.tableSectionLabelRow}>
-            <Ionicons name="reader-outline" size={13} color={palette.ink500} />
-            <Text style={styles.tableSectionLabel}>
-              {isOfficeView ? 'Detailed reading history table' : 'Site reading records table'}
-            </Text>
-          </View>
-          <DataTable
-            columns={activeColumns}
-            rows={items}
-            emptyMessage={
-              isOfficeView
-                ? `Try another date range or confirm ${resolvedTableMode.toLowerCase()} readings have already been submitted to the database.`
-                : 'No records were found for this site in the selected date range.'
-            }
-          />
+          {activeHistoryView === 'records' || !canShowDailyAverageView ? (
+            <>
+              <View style={styles.tableSectionLabelRow}>
+                <Ionicons name="reader-outline" size={13} color={palette.ink500} />
+                <Text style={styles.tableSectionLabel}>
+                  {isOfficeView ? 'Detailed reading history table' : 'Site reading records table'}
+                </Text>
+              </View>
+              <DataTable
+                columns={activeColumns}
+                rows={items}
+                emptyMessage={
+                  isOfficeView
+                    ? `Try another date range or confirm ${resolvedTableMode.toLowerCase()} readings have already been submitted to the database.`
+                    : 'No records were found for this site in the selected date range.'
+                }
+              />
+            </>
+          ) : null}
         </View>
       )}
     </ScreenShell>
@@ -1467,6 +1556,39 @@ function createStyles(palette, isDark) {
     compactActionLabel: {
       fontSize: 11,
       lineHeight: 13,
+    },
+    historyViewTabs: {
+      flexDirection: 'row',
+      flexWrap: 'wrap',
+      gap: 6,
+      borderWidth: 1,
+      borderColor: palette.line,
+      backgroundColor: isDark ? '#0C1621' : '#F9FCFF',
+      padding: 4,
+      borderRadius: 8,
+    },
+    historyViewTab: {
+      minHeight: 32,
+      flex: 1,
+      minWidth: 120,
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'center',
+      gap: 6,
+      paddingHorizontal: 10,
+      paddingVertical: 7,
+      borderRadius: 6,
+    },
+    historyViewTabActive: {
+      backgroundColor: palette.navy700,
+    },
+    historyViewTabText: {
+      color: palette.ink700,
+      fontSize: 11,
+      fontWeight: '800',
+    },
+    historyViewTabTextActive: {
+      color: palette.onAccent,
     },
     exportButtonLabel: {
       fontSize: 11,
