@@ -170,7 +170,7 @@ export default function OfficeDashboardScreen({ navigation }) {
   const [roleFilter, setRoleFilter] = useState('all');
   const [recentReadingFilter, setRecentReadingFilter] = useState('all');
   const [recentReadingDateFilter, setRecentReadingDateFilter] = useState('all');
-  const [visibleRecentReadings, setVisibleRecentReadings] = useState(10);
+  const [visibleRecentReadings, setVisibleRecentReadings] = useState(5);
   const [pendingNoticeDismissed, setPendingNoticeDismissed] = useState(false);
   const [showApprovalAnimation, setShowApprovalAnimation] = useState(false);
   const [message, setMessage] = useState('');
@@ -364,7 +364,7 @@ export default function OfficeDashboardScreen({ navigation }) {
   );
 
   useEffect(() => {
-    setVisibleRecentReadings(10);
+    setVisibleRecentReadings(5);
   }, [recentReadingDateFilter, recentReadingFilter, dashboard.recentReadings]);
 
   const canViewGraphs = profile?.role === 'manager' || profile?.role === 'supervisor';
@@ -667,7 +667,7 @@ export default function OfficeDashboardScreen({ navigation }) {
               {filteredRecentReadings.length > visibleRecentReadings ? (
                 <PrimaryButton
                   label={`Show more (${filteredRecentReadings.length - visibleRecentReadings} left)`}
-                  onPress={() => setVisibleRecentReadings((current) => current + 10)}
+                  onPress={() => setVisibleRecentReadings((current) => current + 5)}
                   tone="secondary"
                   icon={<Ionicons name="chevron-down-outline" size={16} color={palette.ink900} />}
                 />

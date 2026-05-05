@@ -3,8 +3,8 @@
   "version": "1.0.0",
   "main": "index.js",
   "scripts": {
-    "start": "expo start --localhost",
-    "start:lan": "expo start --lan",
+    "start": "expo start --lan",
+    "start:local": "expo start --localhost",
     "android": "expo run:android",
     "ios": "expo run:ios",
     "web": "expo start --web",

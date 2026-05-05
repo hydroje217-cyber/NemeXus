@@ -34,6 +34,77 @@ function SectionHeader({ title, body, iconName = 'bar-chart-outline', iconColor,
   );
 }
 
+function ChartValueDetails({ selected, styles }) {
+  if (!selected) {
+    return null;
+  }
+
+  const isCompact = selected.items.length === 1 && !selected.totalLabel;
+  const isSplitCompact = selected.items.length > 1;
+
+  return (
+    <View
+      style={[
+        styles.chartValueDetails,
+        isCompact && styles.chartValueDetailsCompact,
+        isSplitCompact && styles.chartValueDetailsSplitCompact,
+      ]}
+    >
+      <View
+        style={[
+          styles.chartValueDetailsHeader,
+          isCompact && styles.chartValueDetailsHeaderCompact,
+          isSplitCompact && styles.chartValueDetailsHeaderSplitCompact,
+        ]}
+      >
+        <Text style={styles.chartValueDetailsTitle}>{selected.title}</Text>
+      </View>
+
+      <View
+        style={[
+          styles.chartValueDetailsRow,
+          isCompact && styles.chartValueDetailsRowCompact,
+          isSplitCompact && styles.chartValueDetailsRowSplitCompact,
+        ]}
+      >
+        {selected.items.map((item) => (
+          <View
+            key={item.label}
+            style={[
+              styles.chartValueDetailsItem,
+              isCompact && styles.chartValueDetailsItemCompact,
+              isSplitCompact && styles.chartValueDetailsItemSplitCompact,
+            ]}
+          >
+            <View style={[styles.chartValueDetailsDot, { backgroundColor: item.color }]} />
+            {item.iconName ? <Ionicons name={item.iconName} size={12} color={item.color} /> : null}
+            {!isCompact ? <Text style={styles.chartValueDetailsLabel}>{item.label}</Text> : null}
+            <Text
+              numberOfLines={1}
+              adjustsFontSizeToFit
+              minimumFontScale={0.55}
+              style={styles.chartValueDetailsValue}
+            >
+              {formatNumber(item.value, 2)}
+            </Text>
+          </View>
+        ))}
+      </View>
+
+      {selected.totalLabel ? (
+        <Text
+          numberOfLines={1}
+          adjustsFontSizeToFit
+          minimumFontScale={0.55}
+          style={styles.chartValueDetailsTotal}
+        >
+          {selected.totalLabel}: {formatNumber(selected.totalValue, 2)}
+        </Text>
+      ) : null}
+    </View>
+  );
+}
+
 const MIN_CHART_ZOOM = 0.75;
 const MAX_CHART_ZOOM = 2;
 const CHART_ZOOM_STEP = 0.25;
@@ -41,6 +112,7 @@ const CHART_ZOOM_STEP = 0.25;
 function MonthlyProductionCard({ monthlyProduction, palette, isDark, isWide, screenWidth, styles, cardStyle }) {
   const rows = monthlyProduction?.rows ?? [];
   const [zoomLevel, setZoomLevel] = useState(1);
+  const [selectedBar, setSelectedBar] = useState(null);
   const totalProduction =
     monthlyProduction?.totalProduction ??
     rows.reduce((sum, row) => sum + (Number(row.production) || 0), 0);
@@ -76,21 +148,30 @@ function MonthlyProductionCard({ monthlyProduction, palette, isDark, isWide, scr
       return Math.min(MAX_CHART_ZOOM, Math.max(MIN_CHART_ZOOM, Number(nextZoom.toFixed(2))));
     });
   };
-  const chartData = rows.map((row) => ({
-    value: Math.max(0, row.production || 0),
-    label: row.label,
-    frontColor: palette.teal600,
-    gradientColor: palette.cyan300,
-    topLabelContainerStyle,
-    topLabelComponent: () =>
-      row.production > 0 ? (
-        <View style={styles.chartPlainValueWrap}>
-          <Text numberOfLines={1} adjustsFontSizeToFit style={[styles.chartPlainValueText, { fontSize: valueLabelFontSize }]}>
-            {formatNumber(row.production, 2)}
-          </Text>
-        </View>
-      ) : null,
-  }));
+  const chartData = rows.map((row) => {
+    const production = Math.max(0, row.production || 0);
+
+    return {
+      value: production,
+      label: row.label,
+      frontColor: palette.teal600,
+      gradientColor: palette.cyan300,
+      onPress: () =>
+        setSelectedBar({
+          title: row.label,
+          items: [{ label: 'Production', value: production, color: palette.teal600 }],
+        }),
+      topLabelContainerStyle,
+      topLabelComponent: () =>
+        row.production > 0 ? (
+          <View style={styles.chartPlainValueWrap}>
+            <Text numberOfLines={1} adjustsFontSizeToFit style={[styles.chartPlainValueText, { fontSize: valueLabelFontSize }]}>
+              {formatNumber(row.production, 2)}
+            </Text>
+          </View>
+        ) : null,
+    };
+  });
 
   return (
     <Card style={[styles.panelCard, cardStyle]}>
@@ -172,8 +253,11 @@ function MonthlyProductionCard({ monthlyProduction, palette, isDark, isWide, scr
           maxValue={chartMaxValue}
           noOfSections={4}
           showGradient
-          roundedTop
           roundedBottom={false}
+          barBorderTopLeftRadius={5}
+          barBorderTopRightRadius={5}
+          barBorderBottomLeftRadius={0}
+          barBorderBottomRightRadius={0}
           isAnimated
           animationDuration={800}
           showValuesAsTopLabel={false}
@@ -191,9 +275,10 @@ function MonthlyProductionCard({ monthlyProduction, palette, isDark, isWide, scr
           nestedScrollEnabled
           showScrollIndicator
           indicatorColor={isDark ? 'white' : 'black'}
-          disablePress
         />
       </View>
+
+      <ChartValueDetails selected={selectedBar} styles={styles} />
 
       <View style={styles.productionLegendRow}>
         <View style={styles.productionLegendItem}>
@@ -212,6 +297,7 @@ function MonthlyProductionCard({ monthlyProduction, palette, isDark, isWide, scr
 function MonthlyPowerConsumptionCard({ monthlyPowerConsumption, palette, isDark, isWide, screenWidth, styles, cardStyle }) {
   const rows = monthlyPowerConsumption?.rows ?? [];
   const [zoomLevel, setZoomLevel] = useState(1);
+  const [selectedBar, setSelectedBar] = useState(null);
   const chlorinationPowerColor = isDark ? palette.teal500 : palette.teal600;
   const deepwellPowerColor = palette.amber500;
   const totalPower =
@@ -297,6 +383,16 @@ function MonthlyPowerConsumptionCard({ monthlyPowerConsumption, palette, isDark,
 
     return {
       label: row.label,
+      onPress: () =>
+        setSelectedBar({
+          title: row.label,
+          totalLabel: 'Total',
+          totalValue: totalMonthPower,
+          items: [
+            { label: 'Chlorination', value: chlorinationPower, color: chlorinationPowerColor },
+            { label: 'Deepwell', value: deepwellPower, color: deepwellPowerColor },
+          ],
+        }),
       topLabelContainerStyle: totalLabelContainerStyle,
       topLabelComponent: () => renderPowerTotalLabel(totalMonthPower),
       stacks: powerStacks.map((stack, index) =>
@@ -406,9 +502,10 @@ function MonthlyPowerConsumptionCard({ monthlyPowerConsumption, palette, isDark,
           nestedScrollEnabled
           showScrollIndicator
           indicatorColor={isDark ? 'white' : 'black'}
-          disablePress
         />
       </View>
+
+      <ChartValueDetails selected={selectedBar} styles={styles} />
 
       <View style={styles.productionLegendRow}>
         <View style={styles.productionLegendItem}>
@@ -431,6 +528,7 @@ function MonthlyPowerConsumptionCard({ monthlyPowerConsumption, palette, isDark,
 function MonthlyChemicalUsageCard({ monthlyChemicalUsage, palette, isDark, isWide, screenWidth, styles, cardStyle }) {
   const rows = monthlyChemicalUsage?.rows ?? [];
   const [zoomLevel, setZoomLevel] = useState(1);
+  const [selectedBar, setSelectedBar] = useState(null);
   const chlorineColor = isDark ? '#34BFA3' : '#0F8F7C';
   const peroxideColor = isDark ? '#F6C85F' : '#E7A321';
   const totalChlorine =
@@ -440,120 +538,106 @@ function MonthlyChemicalUsageCard({ monthlyChemicalUsage, palette, isDark, isWid
     monthlyChemicalUsage?.totalPeroxide ??
     rows.reduce((sum, row) => sum + (Number(row.peroxideUsage) || 0), 0);
   const maxUsage = Math.max(
-    ...rows.map((row) => Math.max(row.chlorineUsage || 0, row.peroxideUsage || 0)),
+    ...rows.map((row) => row.totalUsage || (row.chlorineUsage || 0) + (row.peroxideUsage || 0)),
     1
   );
-  const chartHeight = isWide ? 210 : 190;
-  const baseBarWidth = isWide ? 30 : 26;
-  const baseSpacing = isWide ? 34 : 28;
+  const chartHeight = isWide ? 270 : 230;
+  const baseBarWidth = isWide ? 34 : 30;
+  const baseSpacing = isWide ? 42 : 32;
   const barWidth = Math.round(baseBarWidth * zoomLevel);
   const spacing = Math.round(baseSpacing * zoomLevel);
   const rawViewportWidth = Math.max(280, screenWidth - (isWide ? 120 : 72));
   const baseContentWidth = Math.max(rows.length * (baseBarWidth + baseSpacing) + 90, isWide ? 820 : 560);
   const chartViewportWidth = Math.min(rawViewportWidth, Math.max(280, baseContentWidth - 120));
   const chartMaxValue = maxUsage <= 0 ? 1 : Math.ceil(maxUsage * 1.22);
-  const hasData = rows.some((row) => row.totalUsage > 0);
+  const hasData = rows.some((row) => row.totalUsage > 0 || row.chlorineUsage > 0 || row.peroxideUsage > 0);
   const zoomPercent = Math.round(zoomLevel * 100);
   const canZoomOut = zoomLevel > MIN_CHART_ZOOM;
   const canZoomIn = zoomLevel < MAX_CHART_ZOOM;
-  const valueLabelWidth = Math.round(Math.max(44, Math.min(64, barWidth + 32)));
-  const valueLabelFontSize = zoomLevel >= 1.35 ? 8 : 7;
-  const valueLabelContainerStyle = {
-    width: valueLabelWidth,
+  const segmentValueFontSize = zoomLevel >= 1.35 ? 8 : 7;
+  const totalLabelWidth = Math.round(Math.max(56, Math.min(82, barWidth + 34)));
+  const totalValueFontSize = zoomLevel >= 1.35 ? 9 : 8;
+  const totalLabelContainerStyle = {
+    width: totalLabelWidth,
     height: 18,
-    left: (barWidth - valueLabelWidth) / 2,
+    left: (barWidth - totalLabelWidth) / 2,
     justifyContent: 'center',
     alignItems: 'center',
   };
-  const renderChemicalValueLabel = (value) =>
+  const renderChemicalTotalLabel = (value) =>
     value > 0 ? (
       <View style={styles.chartPlainValueWrap}>
-        <Text numberOfLines={1} adjustsFontSizeToFit style={[styles.chartPlainValueText, { fontSize: valueLabelFontSize }]}>
+        <Text numberOfLines={1} adjustsFontSizeToFit style={[styles.chartPlainValueText, { fontSize: totalValueFontSize }]}>
           {formatNumber(value, 2)}
         </Text>
       </View>
     ) : null;
+  const renderChemicalStackValue = (value, textColor) =>
+    value > 0 ? (
+      <View style={styles.stackValueWrap}>
+        <Text
+          numberOfLines={1}
+          adjustsFontSizeToFit
+          style={[
+            styles.stackValueText,
+            {
+              color: textColor,
+              fontSize: segmentValueFontSize,
+              textShadowColor: textColor === '#FFFFFF' ? 'rgba(0,0,0,0.28)' : 'rgba(255,255,255,0.42)',
+            },
+          ]}
+        >
+          {formatNumber(value, 2)}
+        </Text>
+      </View>
+    ) : null;
+  const createChemicalStack = ({ value, color, textColor, isBottom, isTop }) => ({
+    value,
+    color,
+    borderBottomLeftRadius: isBottom ? 5 : 0,
+    borderBottomRightRadius: isBottom ? 5 : 0,
+    borderTopLeftRadius: isTop ? 5 : 0,
+    borderTopRightRadius: isTop ? 5 : 0,
+    innerBarComponent: () => renderChemicalStackValue(value, textColor),
+  });
   const updateZoom = (change) => {
     setZoomLevel((currentZoom) => {
       const nextZoom = currentZoom + change;
       return Math.min(MAX_CHART_ZOOM, Math.max(MIN_CHART_ZOOM, Number(nextZoom.toFixed(2))));
     });
   };
-  const createChemicalChartData = ({ field, color, gradientColor }) =>
-    rows.map((row) => {
-      const value = Math.max(0, row[field] || 0);
+  const chartData = rows.map((row) => {
+    const chlorineUsage = Math.max(0, row.chlorineUsage || 0);
+    const peroxideUsage = Math.max(0, row.peroxideUsage || 0);
+    const totalMonthUsage = Math.max(0, row.totalUsage || chlorineUsage + peroxideUsage);
+    const chemicalStacks = [
+      { key: 'chlorine', value: chlorineUsage, color: chlorineColor, textColor: '#FFFFFF' },
+      { key: 'peroxide', value: peroxideUsage, color: peroxideColor, textColor: '#11233B' },
+    ];
 
-      return {
-        value,
-        label: row.label,
-        frontColor: color,
-        gradientColor,
-        topLabelContainerStyle: valueLabelContainerStyle,
-        topLabelComponent: () => renderChemicalValueLabel(value),
-      };
-    });
-  const chlorineChartData = createChemicalChartData({
-    field: 'chlorineUsage',
-    color: chlorineColor,
-    gradientColor: isDark ? '#62D7C1' : '#3BC4AA',
+    return {
+      label: row.label,
+      onPress: () =>
+        setSelectedBar({
+          title: row.label,
+          totalLabel: 'Total',
+          totalValue: totalMonthUsage,
+          items: [
+            { label: 'Chlorine', value: chlorineUsage, color: chlorineColor, iconName: 'water-outline' },
+            { label: 'Peroxide', value: peroxideUsage, color: peroxideColor, iconName: 'flask-outline' },
+          ],
+        }),
+      topLabelContainerStyle: totalLabelContainerStyle,
+      topLabelComponent: () => renderChemicalTotalLabel(totalMonthUsage),
+      stacks: chemicalStacks.map((stack, index) =>
+        createChemicalStack({
+          ...stack,
+          isBottom: index === 0,
+          isTop: index === chemicalStacks.length - 1,
+        })
+      ),
+    };
   });
-  const peroxideChartData = createChemicalChartData({
-    field: 'peroxideUsage',
-    color: peroxideColor,
-    gradientColor: isDark ? '#FFE18A' : '#F8C34F',
-  });
-  const renderChemicalChart = ({ title, iconName, iconColor, data, legendStyle, legendLabel, emptyMessage }) => (
-    <View style={styles.chemicalChartPanel}>
-      <View style={styles.chemicalChartTitleRow}>
-        <View style={styles.chemicalChartTitleWrap}>
-          <Ionicons name={iconName} size={14} color={iconColor} />
-          <Text style={styles.chemicalChartTitle}>{title}</Text>
-        </View>
-        <View style={styles.productionLegendItem}>
-          <View style={[styles.productionLegendSwatch, legendStyle]} />
-          <Text style={styles.productionLegendText}>{legendLabel}</Text>
-        </View>
-      </View>
-
-      <View style={[styles.productionChart, styles.chemicalUsageChart]}>
-        <BarChart
-          data={data}
-          width={chartViewportWidth}
-          height={chartHeight}
-          barWidth={barWidth}
-          spacing={spacing}
-          initialSpacing={18}
-          endSpacing={18}
-          maxValue={chartMaxValue}
-          noOfSections={4}
-          showGradient
-          roundedTop
-          roundedBottom={false}
-          isAnimated
-          animationDuration={800}
-          xAxisColor={palette.lineStrong}
-          yAxisColor={palette.lineStrong}
-          rulesColor={palette.line}
-          rulesThickness={1}
-          yAxisTextStyle={styles.chartAxisLabel}
-          xAxisLabelTextStyle={styles.chartMonthLabel}
-          yAxisLabelWidth={58}
-          xAxisTextNumberOfLines={1}
-          labelsExtraHeight={28}
-          formatYLabel={(value) => formatNumber(value, 0)}
-          disableScroll={false}
-          nestedScrollEnabled
-          showScrollIndicator
-          indicatorColor={isDark ? 'white' : 'black'}
-          disablePress
-        />
-      </View>
-
-      {!data.some((item) => item.value > 0) ? (
-        <MessageBanner tone="info">{emptyMessage}</MessageBanner>
-      ) : null}
-    </View>
-  );
 
   return (
     <Card style={[styles.panelCard, cardStyle]}>
@@ -565,19 +649,43 @@ function MonthlyChemicalUsageCard({ monthlyChemicalUsage, palette, isDark, isWid
       />
 
       <View style={[styles.chartMetaRow, !isWide && styles.chartMetaRowCompact]}>
-        <View style={[styles.productionSummaryPill, isWide && styles.productionSummaryPillWide]}>
-          <View style={styles.productionSummaryAccent} />
-          <View style={styles.productionSummaryIcon}>
-            <Ionicons name="flask-outline" size={15} color={palette.teal600} />
+        <View style={styles.chemicalSummaryTotals}>
+          <View style={[styles.productionSummaryPill, styles.chemicalSummaryPill]}>
+            <View style={[styles.productionSummaryAccent, styles.chemicalSummaryAccentChlorine]} />
+            <View style={[styles.productionSummaryIcon, styles.chemicalSummaryIconChlorine]}>
+              <Ionicons name="water-outline" size={15} color={chlorineColor} />
+            </View>
+            <View style={styles.productionSummaryCopy}>
+              <Text style={styles.productionSummaryLabel}>Total Chlorine</Text>
+              <Text
+                numberOfLines={1}
+                adjustsFontSizeToFit
+                minimumFontScale={0.55}
+                style={[styles.productionSummaryValue, styles.chemicalSummaryValue]}
+              >
+                {formatNumber(totalChlorine)}
+              </Text>
+              <Text style={styles.productionSummaryHint}>Latest 10 months</Text>
+            </View>
           </View>
-          <View style={styles.productionSummaryCopy}>
-            <Text style={styles.productionSummaryLabel}>Chemical Usage</Text>
-            <Text numberOfLines={1} adjustsFontSizeToFit style={styles.productionSummaryValue}>
-              {formatNumber(totalChlorine + totalPeroxide)}
-            </Text>
-            <Text style={styles.productionSummaryHint}>
-              Cl {formatNumber(totalChlorine)} / H2O2 {formatNumber(totalPeroxide)}
-            </Text>
+
+          <View style={[styles.productionSummaryPill, styles.chemicalSummaryPill]}>
+            <View style={[styles.productionSummaryAccent, styles.chemicalSummaryAccentPeroxide]} />
+            <View style={[styles.productionSummaryIcon, styles.chemicalSummaryIconPeroxide]}>
+              <Ionicons name="flask-outline" size={15} color={peroxideColor} />
+            </View>
+            <View style={styles.productionSummaryCopy}>
+              <Text style={styles.productionSummaryLabel}>Total Peroxide</Text>
+              <Text
+                numberOfLines={1}
+                adjustsFontSizeToFit
+                minimumFontScale={0.55}
+                style={[styles.productionSummaryValue, styles.chemicalSummaryValue]}
+              >
+                {formatNumber(totalPeroxide)}
+              </Text>
+              <Text style={styles.productionSummaryHint}>Latest 10 months</Text>
+            </View>
           </View>
         </View>
 
@@ -625,25 +733,52 @@ function MonthlyChemicalUsageCard({ monthlyChemicalUsage, palette, isDark, isWid
         </View>
       </View>
 
-      {renderChemicalChart({
-        title: 'Chlorine Usage',
-        iconName: 'water-outline',
-        iconColor: chlorineColor,
-        data: chlorineChartData,
-        legendStyle: styles.chemicalLegendChlorine,
-        legendLabel: 'Chlorine',
-        emptyMessage: 'Chlorine usage will appear here after chlorine values are saved.',
-      })}
+      <View style={[styles.productionChart, styles.chemicalUsageChart]}>
+        <BarChart
+          stackData={chartData}
+          width={chartViewportWidth}
+          height={chartHeight}
+          barWidth={barWidth}
+          spacing={spacing}
+          initialSpacing={18}
+          endSpacing={18}
+          maxValue={chartMaxValue}
+          noOfSections={5}
+          roundedTop
+          roundedBottom={false}
+          isAnimated
+          animationDuration={800}
+          xAxisColor={palette.lineStrong}
+          yAxisColor={palette.lineStrong}
+          rulesColor={palette.line}
+          rulesThickness={1}
+          yAxisTextStyle={styles.chartAxisLabel}
+          xAxisLabelTextStyle={styles.chartMonthLabel}
+          yAxisLabelWidth={58}
+          xAxisTextNumberOfLines={1}
+          labelsExtraHeight={28}
+          formatYLabel={(value) => formatNumber(value, 0)}
+          disableScroll={false}
+          nestedScrollEnabled
+          showScrollIndicator
+          indicatorColor={isDark ? 'white' : 'black'}
+        />
+      </View>
 
-      {renderChemicalChart({
-        title: 'Peroxide Usage',
-        iconName: 'flask-outline',
-        iconColor: peroxideColor,
-        data: peroxideChartData,
-        legendStyle: styles.chemicalLegendPeroxide,
-        legendLabel: 'Peroxide',
-        emptyMessage: 'Peroxide usage will appear here after peroxide values are saved.',
-      })}
+      <ChartValueDetails selected={selectedBar} styles={styles} />
+
+      <View style={styles.productionLegendRow}>
+        <View style={styles.productionLegendItem}>
+          <Ionicons name="water-outline" size={13} color={chlorineColor} />
+          <View style={[styles.productionLegendSwatch, styles.chemicalLegendChlorine]} />
+          <Text style={styles.productionLegendText}>Chlorine</Text>
+        </View>
+        <View style={styles.productionLegendItem}>
+          <Ionicons name="flask-outline" size={13} color={peroxideColor} />
+          <View style={[styles.productionLegendSwatch, styles.chemicalLegendPeroxide]} />
+          <Text style={styles.productionLegendText}>Peroxide</Text>
+        </View>
+      </View>
 
       {!hasData ? (
         <MessageBanner tone="info">Monthly chemical usage will appear here after chlorine and peroxide values are saved.</MessageBanner>
@@ -655,6 +790,7 @@ function MonthlyChemicalUsageCard({ monthlyChemicalUsage, palette, isDark, isWid
 function DailyProductionCard({ dailyProduction, palette, isDark, isWide, screenWidth, styles, cardStyle }) {
   const rows = dailyProduction?.rows ?? [];
   const [zoomLevel, setZoomLevel] = useState(1);
+  const [selectedBar, setSelectedBar] = useState(null);
   const totalProduction =
     dailyProduction?.totalProduction ??
     rows.reduce((sum, row) => sum + (Number(row.production) || 0), 0);
@@ -690,21 +826,31 @@ function DailyProductionCard({ dailyProduction, palette, isDark, isWide, screenW
       return Math.min(MAX_CHART_ZOOM, Math.max(MIN_CHART_ZOOM, Number(nextZoom.toFixed(2))));
     });
   };
-  const chartData = rows.map((row) => ({
-    value: Math.max(0, row.production || 0),
-    label: row.label,
-    frontColor: isDark ? '#1D7896' : '#176A87',
-    gradientColor: isDark ? '#36B7D3' : '#4FC3DF',
-    topLabelContainerStyle,
-    topLabelComponent: () =>
-      row.production > 0 ? (
-        <View style={styles.chartPlainValueWrap}>
-          <Text numberOfLines={1} adjustsFontSizeToFit style={[styles.chartPlainValueText, styles.dailyChartPlainValueText, { fontSize: valueLabelFontSize }]}>
-            {formatNumber(row.production, 2)}
-          </Text>
-        </View>
-      ) : null,
-  }));
+  const chartData = rows.map((row) => {
+    const production = Math.max(0, row.production || 0);
+    const productionColor = isDark ? '#1D7896' : '#176A87';
+
+    return {
+      value: production,
+      label: row.label,
+      frontColor: productionColor,
+      gradientColor: isDark ? '#36B7D3' : '#4FC3DF',
+      onPress: () =>
+        setSelectedBar({
+          title: row.label,
+          items: [{ label: 'Production', value: production, color: productionColor }],
+        }),
+      topLabelContainerStyle,
+      topLabelComponent: () =>
+        row.production > 0 ? (
+          <View style={styles.chartPlainValueWrap}>
+            <Text numberOfLines={1} adjustsFontSizeToFit style={[styles.chartPlainValueText, styles.dailyChartPlainValueText, { fontSize: valueLabelFontSize }]}>
+              {formatNumber(row.production, 2)}
+            </Text>
+          </View>
+        ) : null,
+    };
+  });
 
   return (
     <Card style={[styles.panelCard, cardStyle]}>
@@ -790,8 +936,11 @@ function DailyProductionCard({ dailyProduction, palette, isDark, isWide, screenW
           maxValue={chartMaxValue}
           noOfSections={5}
           showGradient
-          roundedTop
           roundedBottom={false}
+          barBorderTopLeftRadius={5}
+          barBorderTopRightRadius={5}
+          barBorderBottomLeftRadius={0}
+          barBorderBottomRightRadius={0}
           isAnimated
           animationDuration={800}
           showValuesAsTopLabel={false}
@@ -811,9 +960,10 @@ function DailyProductionCard({ dailyProduction, palette, isDark, isWide, screenW
           nestedScrollEnabled
           showScrollIndicator
           indicatorColor={isDark ? 'white' : 'black'}
-          disablePress
         />
       </View>
+
+      <ChartValueDetails selected={selectedBar} styles={styles} />
 
       <View style={styles.productionLegendRow}>
         <View style={styles.productionLegendItem}>
@@ -945,8 +1095,8 @@ export default function OfficeGraphsScreen({ navigation }) {
             styles={styles}
             cardStyle={useTwoColumnCharts ? styles.chartGridCard : null}
           />
-          <MonthlyChemicalUsageCard
-            monthlyChemicalUsage={monthlyChemicalUsage}
+          <MonthlyPowerConsumptionCard
+            monthlyPowerConsumption={monthlyPowerConsumption}
             palette={palette}
             isDark={isDark}
             isWide={isWide}
@@ -954,8 +1104,8 @@ export default function OfficeGraphsScreen({ navigation }) {
             styles={styles}
             cardStyle={useTwoColumnCharts ? styles.chartGridCard : null}
           />
-          <MonthlyPowerConsumptionCard
-            monthlyPowerConsumption={monthlyPowerConsumption}
+          <MonthlyChemicalUsageCard
+            monthlyChemicalUsage={monthlyChemicalUsage}
             palette={palette}
             isDark={isDark}
             isWide={isWide}
@@ -1081,6 +1231,16 @@ function createStyles(palette, isDark) {
     chartMetaRowCompact: {
       flexDirection: 'column',
     },
+    chemicalSummaryTotals: {
+      flex: 1,
+      flexDirection: 'row',
+      gap: 8,
+      minWidth: 0,
+    },
+    chemicalSummaryTotalsCompact: {
+      width: '100%',
+      flexDirection: 'column',
+    },
     productionSummaryPill: {
       position: 'relative',
       overflow: 'hidden',
@@ -1107,6 +1267,17 @@ function createStyles(palette, isDark) {
     productionSummaryPillWide: {
       maxWidth: 360,
     },
+    chemicalSummaryPill: {
+      flex: 1,
+      maxWidth: undefined,
+      gap: 7,
+      paddingLeft: 12,
+      paddingRight: 8,
+    },
+    chemicalSummaryValue: {
+      minWidth: 0,
+      flexShrink: 1,
+    },
     productionSummaryAccent: {
       position: 'absolute',
       left: 0,
@@ -1114,6 +1285,12 @@ function createStyles(palette, isDark) {
       bottom: 0,
       width: 5,
       backgroundColor: palette.teal600,
+    },
+    chemicalSummaryAccentChlorine: {
+      backgroundColor: isDark ? '#34BFA3' : '#0F8F7C',
+    },
+    chemicalSummaryAccentPeroxide: {
+      backgroundColor: isDark ? '#F6C85F' : '#E7A321',
     },
     productionSummaryIcon: {
       width: 38,
@@ -1124,6 +1301,14 @@ function createStyles(palette, isDark) {
       borderColor: isDark ? '#26786F' : '#9ADBD5',
       backgroundColor: isDark ? '#0E3A37' : '#DDF7F4',
       borderRadius: 8,
+    },
+    chemicalSummaryIconChlorine: {
+      borderColor: isDark ? '#26786F' : '#9ADBD5',
+      backgroundColor: isDark ? '#0E3A37' : '#DDF7F4',
+    },
+    chemicalSummaryIconPeroxide: {
+      borderColor: isDark ? '#8F6B1A' : '#F4D78A',
+      backgroundColor: isDark ? '#3B2D12' : '#FFF7DF',
     },
     productionSummaryCopy: {
       flex: 1,
@@ -1235,6 +1420,120 @@ function createStyles(palette, isDark) {
       minHeight: 360,
       paddingTop: 22,
       paddingBottom: 10,
+    },
+    chartValueDetails: {
+      gap: 8,
+      borderWidth: 1,
+      borderColor: isDark ? '#21475A' : '#CDE6EF',
+      backgroundColor: isDark ? '#0F2230' : '#F4FBFE',
+      paddingHorizontal: 12,
+      paddingVertical: 10,
+      borderRadius: 8,
+    },
+    chartValueDetailsCompact: {
+      alignSelf: 'center',
+      minWidth: 160,
+      maxWidth: 260,
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      gap: 10,
+      paddingHorizontal: 10,
+      paddingVertical: 8,
+    },
+    chartValueDetailsSplitCompact: {
+      alignSelf: 'center',
+      minWidth: 180,
+      maxWidth: '92%',
+      gap: 4,
+      paddingHorizontal: 8,
+      paddingVertical: 6,
+    },
+    chartValueDetailsHeader: {
+      flexDirection: 'row',
+      flexWrap: 'wrap',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      gap: 8,
+    },
+    chartValueDetailsHeaderCompact: {
+      flex: 1,
+      minWidth: 0,
+    },
+    chartValueDetailsHeaderSplitCompact: {
+      paddingHorizontal: 2,
+      justifyContent: 'center',
+    },
+    chartValueDetailsTitle: {
+      color: palette.ink900,
+      fontSize: 12,
+      fontWeight: '900',
+      textAlign: 'center',
+    },
+    chartValueDetailsTotal: {
+      alignSelf: 'center',
+      minWidth: 120,
+      color: palette.ink700,
+      fontSize: 11,
+      fontWeight: '900',
+      textAlign: 'center',
+    },
+    chartValueDetailsRowSplitCompact: {
+      flexDirection: 'column',
+      alignItems: 'center',
+      flexWrap: 'nowrap',
+      justifyContent: 'center',
+      gap: 4,
+    },
+    chartValueDetailsRow: {
+      flexDirection: 'row',
+      flexWrap: 'wrap',
+      alignItems: 'center',
+      gap: 8,
+    },
+    chartValueDetailsRowCompact: {
+      flexShrink: 0,
+    },
+    chartValueDetailsItem: {
+      minHeight: 30,
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 5,
+      borderWidth: 1,
+      borderColor: palette.line,
+      backgroundColor: isDark ? '#132A3A' : '#FFFFFF',
+      paddingHorizontal: 8,
+      paddingVertical: 6,
+      borderRadius: 8,
+    },
+    chartValueDetailsItemCompact: {
+      minHeight: 28,
+      paddingHorizontal: 7,
+      paddingVertical: 5,
+    },
+    chartValueDetailsItemSplitCompact: {
+      alignSelf: 'center',
+      minWidth: 150,
+      maxWidth: '100%',
+      justifyContent: 'center',
+      paddingHorizontal: 6,
+      paddingVertical: 4,
+    },
+    chartValueDetailsDot: {
+      width: 8,
+      height: 8,
+      borderRadius: 999,
+    },
+    chartValueDetailsLabel: {
+      color: palette.ink700,
+      fontSize: 10,
+      fontWeight: '800',
+    },
+    chartValueDetailsValue: {
+      minWidth: 0,
+      color: palette.ink900,
+      fontSize: 11,
+      fontWeight: '900',
     },
     chemicalChartPanel: {
       gap: 8,

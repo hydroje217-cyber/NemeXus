@@ -16,10 +16,8 @@ create extension if not exists pgcrypto;
 
 insert into public.sites (name, type)
 values
-  ('North Zone Chlorination Station', 'CHLORINATION'),
-  ('South Zone Chlorination Station', 'CHLORINATION'),
-  ('Deepwell Station 1', 'DEEPWELL'),
-  ('Deepwell Station 2', 'DEEPWELL')
+  ('Main Chlorination Facility', 'CHLORINATION'),
+  ('Main Deepwell Pump', 'DEEPWELL')
 on conflict (name) do update
 set type = excluded.type;
 
@@ -43,8 +41,7 @@ site_profile as (
   select *
   from (
     values
-      ('North Zone Chlorination Station'::text, 128500::numeric, 930::numeric, 52::numeric, 0.68::numeric, 0.85::numeric, 7.18::numeric, 188::numeric, 23000::numeric, 39::numeric, 7.6::numeric, 2.4::numeric, 45::numeric),
-      ('South Zone Chlorination Station'::text,  86400::numeric, 640::numeric, 46::numeric, 0.57::numeric, 1.12::numeric, 7.08::numeric, 214::numeric, 17000::numeric, 29::numeric, 5.2::numeric, 1.8::numeric, 34::numeric)
+      ('Main Chlorination Facility'::text, 128500::numeric, 930::numeric, 52::numeric, 0.68::numeric, 0.85::numeric, 7.18::numeric, 188::numeric, 23000::numeric, 39::numeric, 7.6::numeric, 2.4::numeric, 45::numeric)
   ) as p(
     site_name,
     totalizer_start,
@@ -199,8 +196,7 @@ site_profile as (
   select *
   from (
     values
-      ('Deepwell Station 1'::text, 43::numeric, 37::numeric, 31::numeric, 43::numeric, 224::numeric, 22::numeric, 268::numeric, 36::numeric),
-      ('Deepwell Station 2'::text, 39::numeric, 34::numeric, 24::numeric, 39::numeric, 232::numeric, 18::numeric, 312::numeric, 29::numeric)
+      ('Main Deepwell Pump'::text, 43::numeric, 37::numeric, 31::numeric, 43::numeric, 224::numeric, 22::numeric, 268::numeric, 36::numeric)
   ) as p(
     site_name,
     upstream_base,
