@@ -1,6 +1,6 @@
 {
   "expo": {
-    "name": "nemexus",
+    "name": "Nemexus",
     "slug": "nemexus",
     "scheme": "nemexus",
     "version": "1.0.0",
@@ -8,8 +8,14 @@
     "icon": "./assets/icon-logo.png",
     "userInterfaceStyle": "light",
     "newArchEnabled": true,
+    "runtimeVersion": {
+      "policy": "appVersion"
+    },
+    "updates": {
+      "url": "https://u.expo.dev/69ac0f70-f59a-4d34-a842-40ac2adce586"
+    },
     "splash": {
-      "image": "./assets/splash-icon.png",
+      "image": "./assets/splash-icon-logo.png",
       "resizeMode": "contain",
       "backgroundColor": "#030A11"
     },
@@ -33,12 +39,12 @@
       [
         "expo-splash-screen",
         {
-          "image": "./assets/splash-icon.png",
+          "image": "./assets/splash-icon-logo.png",
           "imageWidth": 200,
           "resizeMode": "contain",
           "backgroundColor": "#030A11",
           "dark": {
-            "image": "./assets/splash-icon.png",
+            "image": "./assets/splash-icon-logo.png",
             "backgroundColor": "#030A11"
           }
         }

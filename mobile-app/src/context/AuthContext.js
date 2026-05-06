@@ -13,23 +13,43 @@ function getPasswordResetRedirectUrl() {
   return 'nemexus://reset-password';
 }
 
+function paramsFromUrlPart(value) {
+  if (!value) {
+    return new URLSearchParams();
+  }
+
+  const normalized = value.startsWith('?') || value.startsWith('#') ? value.slice(1) : value;
+  return new URLSearchParams(normalized);
+}
+
 function readRecoveryParams(url) {
   if (!url) {
     return {};
   }
 
   const parsed = ExpoLinking.parse(url);
-  const fragment = typeof parsed.fragment === 'string' ? parsed.fragment : '';
-  const hashParams = new URLSearchParams(fragment);
+  const hashIndex = url.indexOf('#');
+  const queryIndex = url.indexOf('?');
+  const fragment = hashIndex >= 0 ? url.slice(hashIndex + 1) : '';
+  const query =
+    queryIndex >= 0
+      ? url.slice(queryIndex + 1, hashIndex >= 0 ? hashIndex : undefined)
+      : '';
+  const hashParams = paramsFromUrlPart(fragment);
+  const rawQueryParams = paramsFromUrlPart(query);
   const queryParams = parsed.queryParams || {};
+  const code = rawQueryParams.get('code') || queryParams.code || '';
+  const path = parsed.path || parsed.hostname || '';
 
   return {
+    code,
+    path,
     accessToken: hashParams.get('access_token') || queryParams.access_token || '',
     refreshToken: hashParams.get('refresh_token') || queryParams.refresh_token || '',
-    type: hashParams.get('type') || queryParams.type || '',
-    errorCode: hashParams.get('error_code') || queryParams.error_code || '',
+    type: hashParams.get('type') || rawQueryParams.get('type') || queryParams.type || '',
+    errorCode: hashParams.get('error_code') || rawQueryParams.get('error_code') || queryParams.error_code || '',
     errorDescription:
-      hashParams.get('error_description') || queryParams.error_description || '',
+      hashParams.get('error_description') || rawQueryParams.get('error_description') || queryParams.error_description || '',
   };
 }
 
@@ -250,7 +270,9 @@ export function AuthProvider({ children }) {
         }
 
         const recovery = readRecoveryParams(url);
-        const isRecovery = recovery.type === 'recovery';
+        const isRecovery =
+          recovery.type === 'recovery' ||
+          (Boolean(recovery.code) && String(recovery.path || '').includes('reset-password'));
 
         if (!isRecovery) {
           return { ok: false, isRecovery: false, message: '' };
@@ -262,6 +284,16 @@ export function AuthProvider({ children }) {
             isRecovery: true,
             message: decodeURIComponent(recovery.errorDescription).replace(/\+/g, ' '),
           };
+        }
+
+        if (recovery.code) {
+          const { error } = await supabase.auth.exchangeCodeForSession(recovery.code);
+
+          if (error) {
+            return { ok: false, isRecovery: true, message: error.message || 'Invalid reset link.' };
+          }
+
+          return { ok: true, isRecovery: true, message: '' };
         }
 
         if (!recovery.accessToken || !recovery.refreshToken) {
