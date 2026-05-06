@@ -8,6 +8,7 @@ import SupabaseMissingScreen from './screens/SupabaseMissingScreen';
 import {
   approveOperatorProfile,
   assignProfileRole,
+  deleteProfileAccount,
   getDashboardSnapshot,
   getProfile,
   isOfficeRole,
@@ -162,6 +163,21 @@ export default function App() {
     }
   }
 
+  async function handleDeleteAccount(account) {
+    setWorkingId(account.id);
+    setMessage('');
+
+    try {
+      await deleteProfileAccount(account.id);
+      await loadDashboard({ silent: true });
+      setMessage(`${account.full_name || account.email || 'Account'} deleted.`);
+    } catch (error) {
+      setMessage(error.message || 'Failed to delete account.');
+    } finally {
+      setWorkingId('');
+    }
+  }
+
   if (!supabaseReady) {
     return <SupabaseMissingScreen />;
   }
@@ -192,6 +208,7 @@ export default function App() {
       onNavigate={setActiveView}
       onRefresh={() => loadDashboard()}
       onRoleChange={handleRoleChange}
+      onDeleteAccount={handleDeleteAccount}
       onSignOut={handleSignOut}
       onThemeToggle={handleThemeToggle}
     />
