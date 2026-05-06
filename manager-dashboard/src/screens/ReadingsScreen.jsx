@@ -206,7 +206,7 @@ async function buildXlsxBlob(sheets) {
   });
 }
 
-function ExportMenu({ format, open, onToggle, onSelect }) {
+function ExportMenu({ exporting, open, onToggle, onSelect }) {
   const options = [
     { key: 'csv', label: '.csv', icon: FileText },
     { key: 'xlsx', label: '.xlsx', icon: Grid2X2 },
@@ -215,8 +215,9 @@ function ExportMenu({ format, open, onToggle, onSelect }) {
 
   return (
     <div className="readings-export-menu">
-      <button type="button" className="export-format-button" onClick={onToggle}>
-        {format === 'xlsx' ? '.xlsx' : format === 'pdf' ? '.pdf' : '.csv'}
+      <button type="button" className="export-button" disabled={exporting} onClick={onToggle}>
+        <FileText size={17} />
+        {exporting ? 'Exporting...' : 'Export'}
         {open ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
       </button>
       {open ? (
@@ -240,7 +241,7 @@ export default function ReadingsScreen({ selectedTableMode = CHLORINATION }) {
   const [tableMode, setTableMode] = useState(selectedTableMode);
   const [fromDate, setFromDate] = useState('');
   const [toDate, setToDate] = useState('');
-  const [limit, setLimit] = useState('8');
+  const [limit, setLimit] = useState('50');
   const [items, setItems] = useState([]);
   const [dailyAverageRows, setDailyAverageRows] = useState([]);
   const [loading, setLoading] = useState(false);
@@ -416,24 +417,25 @@ export default function ReadingsScreen({ selectedTableMode = CHLORINATION }) {
     await loadHistory({ fromDate: '', toDate: '', limit: '8' });
   }
 
-  async function handleExport() {
+  async function handleExport(nextFormat = exportFormat) {
     if (!items.length && !dailyAverageRows.length) {
-      setMessage(`Load some readings first before exporting to ${exportFormat.toUpperCase()}.`);
+      setMessage(`Load some readings first before exporting to ${nextFormat.toUpperCase()}.`);
       return;
     }
 
     setExporting(true);
+    setExportOpen(false);
 
     try {
       const fileBase = `nemexus-${tableMode.toLowerCase()}-readings-${new Date().toISOString().slice(0, 10)}`;
 
-      if (exportFormat === 'xlsx') {
+      if (nextFormat === 'xlsx') {
         const blob = await buildXlsxBlob([
           { name: 'Daily Averages', rows: buildTableRows(dailyAverageColumns, visibleDailyAverageRows) },
           { name: 'Detailed Readings', rows: buildTableRows(activeColumns, items) },
         ]);
         downloadBlob(blob, `${fileBase}.xlsx`, 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
-      } else if (exportFormat === 'pdf') {
+      } else if (nextFormat === 'pdf') {
         const doc = new jsPDF({ orientation: 'landscape' });
         doc.text('NemeXus Reading History', 14, 14);
         autoTable(doc, {
@@ -459,7 +461,7 @@ export default function ReadingsScreen({ selectedTableMode = CHLORINATION }) {
         downloadBlob(`\uFEFF${sections.join('\n\n')}`, `${fileBase}.csv`, 'text/csv;charset=utf-8;');
       }
 
-      setMessage(`Exported ${tableMode.toLowerCase()} readings as ${exportFormat.toUpperCase()}.`);
+      setMessage(`Exported ${tableMode.toLowerCase()} readings as ${nextFormat.toUpperCase()}.`);
     } catch (error) {
       setMessage(error.message || 'Failed to export readings.');
     } finally {
@@ -531,21 +533,15 @@ export default function ReadingsScreen({ selectedTableMode = CHLORINATION }) {
               <RefreshCw size={17} className={loading ? 'spin' : ''} />
               {loading ? 'Loading...' : 'Load'}
             </button>
-            <div className="export-action">
-              <button type="button" className="export-button" disabled={exporting} onClick={handleExport}>
-                <FileText size={17} />
-                {exporting ? 'Exporting...' : 'Export'}
-              </button>
-              <ExportMenu
-                format={exportFormat}
-                open={exportOpen}
-                onToggle={() => setExportOpen((current) => !current)}
-                onSelect={(nextFormat) => {
-                  setExportFormat(nextFormat);
-                  setExportOpen(false);
-                }}
-              />
-            </div>
+            <ExportMenu
+              exporting={exporting}
+              open={exportOpen}
+              onToggle={() => setExportOpen((current) => !current)}
+              onSelect={(nextFormat) => {
+                setExportFormat(nextFormat);
+                handleExport(nextFormat);
+              }}
+            />
           </div>
         </div>
       </section>

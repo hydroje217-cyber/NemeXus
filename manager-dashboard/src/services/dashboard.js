@@ -63,6 +63,7 @@ export async function getDashboardSnapshot({ limit = 50 } = {}) {
     recentChlorination,
     recentDeepwell,
     profiles,
+    operators,
     monthlyChlorination,
     monthlyDeepwell,
   ] = await Promise.all([
@@ -103,6 +104,12 @@ export async function getDashboardSnapshot({ limit = 50 } = {}) {
       .order('created_at', { ascending: false })
       .limit(30),
     supabase
+      .from('profiles')
+      .select('id, email, full_name, role, is_active, is_approved, approved_at, created_at')
+      .eq('role', 'operator')
+      .order('full_name', { ascending: true, nullsFirst: false })
+      .order('email', { ascending: true, nullsFirst: false }),
+    supabase
       .from('chlorination_readings')
       .select('id, site_id, status, created_at, reading_datetime, slot_datetime, totalizer, chlorine_consumed, peroxide_consumption, chlorination_power_kwh')
       .gte('reading_datetime', startOfMonthlyProductionSourceIso())
@@ -123,6 +130,7 @@ export async function getDashboardSnapshot({ limit = 50 } = {}) {
   throwIfError(recentChlorination, 'Failed to load recent chlorination readings.');
   throwIfError(recentDeepwell, 'Failed to load recent deepwell readings.');
   throwIfError(profiles, 'Failed to load accounts.');
+  throwIfError(operators, 'Failed to load operators.');
   throwIfError(monthlyChlorination, 'Failed to load monthly chlorination production.');
   throwIfError(monthlyDeepwell, 'Failed to load monthly deepwell power consumption.');
 
@@ -144,6 +152,7 @@ export async function getDashboardSnapshot({ limit = 50 } = {}) {
     pendingApprovals: pendingApprovals.data ?? [],
     recentReadings,
     profiles: profiles.data ?? [],
+    operators: operators.data ?? [],
     monthlyProduction: buildMonthlyProduction(monthlyChlorination.data ?? []),
     dailyProduction: buildDailyProduction(monthlyChlorination.data ?? []),
     monthlyChemicalUsage: buildMonthlyChemicalUsage(monthlyChlorination.data ?? []),

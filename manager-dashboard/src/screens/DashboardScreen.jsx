@@ -1,5 +1,19 @@
-import { useState } from 'react';
-import { BarChart3, CheckCircle2, Droplets, Loader2, LogOut, RefreshCw, Users } from 'lucide-react';
+import { useEffect, useRef, useState } from 'react';
+import {
+  BarChart3,
+  CheckCircle2,
+  ChevronDown,
+  Droplets,
+  FlaskConical,
+  History,
+  Loader2,
+  LogOut,
+  Moon,
+  RefreshCw,
+  Sun,
+  Users,
+  Zap,
+} from 'lucide-react';
 import AccountsScreen from './AccountsScreen';
 import ApprovalsScreen from './ApprovalsScreen';
 import OverviewScreen from './OverviewScreen';
@@ -23,6 +37,13 @@ function getTabs(isAdmin) {
   return tabs;
 }
 
+const DASHBOARD_SECTIONS = [
+  { key: 'production', label: 'Production', icon: BarChart3 },
+  { key: 'power', label: 'Power', icon: Zap },
+  { key: 'chemical', label: 'Chemical', icon: FlaskConical },
+  { key: 'activity', label: 'Operators & Recent', icon: History },
+];
+
 export default function DashboardScreen({
   activeView,
   dashboard,
@@ -30,16 +51,33 @@ export default function DashboardScreen({
   loading,
   message,
   profile,
+  themeMode,
   workingId,
   onApprove,
   onNavigate,
   onRefresh,
   onRoleChange,
   onSignOut,
+  onThemeToggle,
 }) {
   const tabs = getTabs(isAdmin);
   const recentReadings = dashboard?.recentReadings ?? [];
   const [readingType, setReadingType] = useState('CHLORINATION');
+  const [dashboardSection, setDashboardSection] = useState('production');
+  const [isBrandMenuOpen, setIsBrandMenuOpen] = useState(false);
+  const brandMenuRef = useRef(null);
+  const isDarkMode = themeMode === 'dark';
+
+  useEffect(() => {
+    function handleDocumentClick(event) {
+      if (!brandMenuRef.current?.contains(event.target)) {
+        setIsBrandMenuOpen(false);
+      }
+    }
+
+    document.addEventListener('mousedown', handleDocumentClick);
+    return () => document.removeEventListener('mousedown', handleDocumentClick);
+  }, []);
 
   function renderActiveView() {
     if (activeView === 'readings') {
@@ -71,18 +109,58 @@ export default function DashboardScreen({
       );
     }
 
-    return <OverviewScreen dashboard={dashboard} />;
+    return <OverviewScreen dashboard={dashboard} activeSection={dashboardSection} />;
+  }
+
+  function handleDashboardSectionSelect(sectionKey) {
+    setDashboardSection(sectionKey);
+    onNavigate('dashboard');
   }
 
   return (
-    <main className="app-shell">
+    <main className={`app-shell ${isDarkMode ? 'dark-mode' : 'light-mode'}`}>
       <aside className="sidebar">
-        <div className="brand-lockup compact">
-          <span className="brand-mark">NX</span>
-          <div>
-            <h1>NemeXus</h1>
-            <p>{profile?.role || 'dashboard'}</p>
-          </div>
+        <div className="brand-menu-wrap" ref={brandMenuRef}>
+          <button
+            className="brand-lockup compact brand-menu-trigger"
+            type="button"
+            aria-expanded={isBrandMenuOpen}
+            aria-label="Open account menu"
+            onClick={() => setIsBrandMenuOpen((isOpen) => !isOpen)}
+          >
+            <span className="brand-mark">
+              <img src="/nemexus-logo.png" alt="NemeXus logo" />
+            </span>
+            <span className="brand-copy">
+              <span className="brand-title-row">
+                <h1>NemeXus</h1>
+                <ChevronDown size={16} />
+              </span>
+              <p>{profile?.email || 'user@example.com'}</p>
+              <p>{profile?.role || 'dashboard'}</p>
+            </span>
+          </button>
+
+          {isBrandMenuOpen ? (
+            <div className="brand-dropdown" role="menu">
+              <button
+                type="button"
+                role="menuitem"
+                onClick={onThemeToggle}
+              >
+                {isDarkMode ? <Sun size={16} /> : <Moon size={16} />}
+                {isDarkMode ? 'Light mode' : 'Dark mode'}
+              </button>
+              <button
+                type="button"
+                role="menuitem"
+                onClick={onSignOut}
+              >
+                <LogOut size={16} />
+                Sign out
+              </button>
+            </div>
+          ) : null}
         </div>
 
         <nav className="tabs">
@@ -93,11 +171,36 @@ export default function DashboardScreen({
                 <button
                   className={activeView === tab.key ? 'active' : ''}
                   type="button"
-                  onClick={() => onNavigate(tab.key)}
+                  onClick={() => {
+                    if (tab.key === 'dashboard') {
+                      handleDashboardSectionSelect('production');
+                      return;
+                    }
+
+                    onNavigate(tab.key);
+                  }}
                 >
                   <Icon size={17} />
                   {tab.label}
                 </button>
+                {tab.key === 'dashboard' && activeView === 'dashboard' ? (
+                  <div className="tabs-subnav dashboard-subnav">
+                    {DASHBOARD_SECTIONS.map((section) => {
+                      const SectionIcon = section.icon;
+                      return (
+                        <button
+                          type="button"
+                          key={section.key}
+                          className={dashboardSection === section.key ? 'active' : ''}
+                          onClick={() => handleDashboardSectionSelect(section.key)}
+                        >
+                          <SectionIcon size={14} />
+                          {section.label}
+                        </button>
+                      );
+                    })}
+                  </div>
+                ) : null}
                 {tab.key === 'readings' && activeView === 'readings' ? (
                   <div className="tabs-subnav">
                     <button
@@ -120,11 +223,6 @@ export default function DashboardScreen({
             );
           })}
         </nav>
-
-        <button className="secondary-button" type="button" onClick={onSignOut}>
-          <LogOut size={16} />
-          Sign out
-        </button>
       </aside>
 
       <section className="content">
