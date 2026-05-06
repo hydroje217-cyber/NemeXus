@@ -170,7 +170,7 @@ export default function OfficeDashboardScreen({ navigation }) {
   const [roleFilter, setRoleFilter] = useState('all');
   const [recentReadingFilter, setRecentReadingFilter] = useState('all');
   const [recentReadingDateFilter, setRecentReadingDateFilter] = useState('all');
-  const [visibleRecentReadings, setVisibleRecentReadings] = useState(5);
+  const [visibleRecentReadings, setVisibleRecentReadings] = useState(3);
   const [pendingNoticeDismissed, setPendingNoticeDismissed] = useState(false);
   const [showApprovalAnimation, setShowApprovalAnimation] = useState(false);
   const [message, setMessage] = useState('');
@@ -364,7 +364,7 @@ export default function OfficeDashboardScreen({ navigation }) {
   );
 
   useEffect(() => {
-    setVisibleRecentReadings(5);
+    setVisibleRecentReadings(3);
   }, [recentReadingDateFilter, recentReadingFilter, dashboard.recentReadings]);
 
   const canViewGraphs = profile?.role === 'manager' || profile?.role === 'supervisor';
@@ -630,35 +630,29 @@ export default function OfficeDashboardScreen({ navigation }) {
                 return (
                   <EntityCard
                     key={item.id}
-                    style={appearance.cardStyle}
+                    style={[appearance.cardStyle, styles.compactReadingCard]}
                     accentStyle={appearance.accentStyle}
                   >
-                    <View style={styles.entityHeader}>
+                    <View style={styles.compactReadingHeader}>
                       <View style={styles.rowCopy}>
-                        <Text style={styles.rowTitle}>{item.site?.name || 'Unknown site'}</Text>
-                        <Text style={styles.rowMeta}>{item.site?.type || '-'}</Text>
+                        <Text style={styles.rowTitle} numberOfLines={1}>{item.site?.name || 'Unknown site'}</Text>
+                        <Text style={styles.rowMeta} numberOfLines={1}>
+                          {(item.submitted_profile?.full_name || item.submitted_profile?.email || '-')} · {formatMaybeTimestamp(item.slot_datetime)}
+                        </Text>
                       </View>
                       <View style={styles.statusBadge}>
                         <Text style={styles.statusBadgeText}>{String(item.status || '-').toUpperCase()}</Text>
                       </View>
                     </View>
 
-                    <View style={styles.metaStrip}>
-                      <View style={styles.metaPill}>
-                        <Text style={styles.metaPillLabel}>Operator</Text>
-                        <Text style={styles.metaPillValue}>
-                          {item.submitted_profile?.full_name || item.submitted_profile?.email || '-'}
-                        </Text>
-                      </View>
-                      <View style={styles.metaPill}>
-                        <Text style={styles.metaPillLabel}>Slot</Text>
-                        <Text style={styles.metaPillValue}>{formatMaybeTimestamp(item.slot_datetime)}</Text>
-                      </View>
-                    </View>
-
-                    <View style={styles.readingDetails}>
-                      <Text style={styles.rowMeta}>Submitted: {formatMaybeTimestamp(item.created_at)}</Text>
-                      <Text style={styles.rowMeta}>Totalizer: {item.totalizer ?? '-'}</Text>
+                    <View style={styles.compactReadingFooter}>
+                      <Text style={styles.compactReadingType}>{item.site?.type || '-'}</Text>
+                      <Text style={styles.compactReadingMetric}>
+                        {item.site?.type === 'DEEPWELL'
+                          ? `Flow ${item.flowrate_m3hr ?? '-'}`
+                          : `Totalizer ${item.totalizer ?? '-'}`}
+                      </Text>
+                      <Text style={styles.compactReadingTime}>Saved {formatMaybeTimestamp(item.created_at)}</Text>
                     </View>
                   </EntityCard>
                 );
@@ -667,7 +661,7 @@ export default function OfficeDashboardScreen({ navigation }) {
               {filteredRecentReadings.length > visibleRecentReadings ? (
                 <PrimaryButton
                   label={`Show more (${filteredRecentReadings.length - visibleRecentReadings} left)`}
-                  onPress={() => setVisibleRecentReadings((current) => current + 5)}
+                  onPress={() => setVisibleRecentReadings((current) => current + 3)}
                   tone="secondary"
                   icon={<Ionicons name="chevron-down-outline" size={16} color={palette.ink900} />}
                 />
@@ -1450,6 +1444,39 @@ function createStyles(palette, isDark) {
   },
   readingDetails: {
     gap: 2,
+  },
+  compactReadingCard: {
+    gap: 6,
+    paddingVertical: 8,
+    paddingHorizontal: 10,
+  },
+  compactReadingHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 8,
+  },
+  compactReadingFooter: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flexWrap: 'wrap',
+    gap: 6,
+  },
+  compactReadingType: {
+    color: palette.ink500,
+    fontSize: 9,
+    fontWeight: '900',
+    textTransform: 'uppercase',
+  },
+  compactReadingMetric: {
+    color: palette.ink900,
+    fontSize: 10,
+    fontWeight: '800',
+  },
+  compactReadingTime: {
+    color: palette.ink700,
+    fontSize: 10,
+    fontWeight: '600',
   },
   roleBadge: {
     borderRadius: 999,

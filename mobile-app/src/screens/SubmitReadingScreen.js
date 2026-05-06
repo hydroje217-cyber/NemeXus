@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { KeyboardAvoidingView, Platform, Pressable, StyleSheet, Text, View } from 'react-native';
+import { KeyboardAvoidingView, Modal, Platform, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import Ionicons from '@expo/vector-icons/Ionicons';
 import Card from '../components/Card';
 import FormField from '../components/FormField';
@@ -14,10 +14,63 @@ import {
   isLikelyOfflineError,
   syncOfflineReadings,
 } from '../services/offlineReadings';
-import { createReading } from '../services/readings';
+import { createReading, getLatestReadingForSite, getReadingForSlot } from '../services/readings';
 import { parseNullableNumber } from '../utils/readings';
+import { isShiftBatchEntryWindow, nextShiftBatchEntryText, shiftNameForSlot } from '../utils/shiftSchedule';
 import { formatTimestamp, roundDownTo30MinSlot } from '../utils/time';
 import LottieView from 'lottie-react-native';
+
+const CHLORINATION_BASE_FIELDS = [
+  'pressure',
+  'rc',
+  'turbidity',
+  'ph',
+  'tds',
+  'tankLevel',
+  'flowrate',
+  'totalizer',
+];
+
+const CHLORINATION_REQUIRED_FIELDS = [
+  ['chlorination.pressure', 'Pressure (psi)', 'pressure'],
+  ['chlorination.rc', 'RC (Residual Chlorine) ppm', 'rc'],
+  ['chlorination.turbidity', 'Turbidity (NTU)', 'turbidity'],
+  ['chlorination.ph', 'pH', 'ph'],
+  ['chlorination.tds', 'TDS (ppm)', 'tds'],
+  ['chlorination.tankLevel', 'Tank level (liters)', 'tankLevel'],
+  ['chlorination.flowrate', 'Flowrate (m3/hr)', 'flowrate'],
+  ['chlorination.totalizer', 'Totalizer', 'totalizer'],
+];
+
+const CHLORINATION_SHIFT_USAGE_FIELDS = [
+  'chlorineConsumed',
+  'peroxideConsumption',
+  'powerConsumptionKwh',
+];
+
+const DEEPWELL_BASE_FIELDS = [
+  'upstreamPressure',
+  'downstreamPressure',
+  'flowrate',
+  'vfdHz',
+  'voltL1',
+  'voltL2',
+  'voltL3',
+  'amperage',
+  'tds',
+];
+
+function readingOperatorName(reading) {
+  return reading?.submitted_profile?.full_name || reading?.submitted_profile?.email || 'another operator';
+}
+
+function readingSlotText(reading) {
+  return reading?.slot_datetime ? formatTimestamp(new Date(reading.slot_datetime)) : '-';
+}
+
+function valueOrDash(value) {
+  return value === null || value === undefined || value === '' ? '-' : String(value);
+}
 
 const initialChlorinationState = {
   totalizer: '',
@@ -51,6 +104,7 @@ export default function SubmitReadingScreen({ navigation, site }) {
   const { palette, isDark } = useTheme();
   const styles = useMemo(() => createStyles(palette, isDark), [palette, isDark]);
   const fieldRefs = useRef({});
+  const screenScrollRef = useRef(null);
   const [remarks, setRemarks] = useState('');
   const [chlorination, setChlorination] = useState(initialChlorinationState);
   const [deepwell, setDeepwell] = useState(initialDeepwellState);
@@ -59,6 +113,8 @@ export default function SubmitReadingScreen({ navigation, site }) {
   const [syncingOffline, setSyncingOffline] = useState(false);
   const [offlineCount, setOfflineCount] = useState(0);
   const [tipsDismissed, setTipsDismissed] = useState(false);
+  const [currentSlot, setCurrentSlot] = useState(() => roundDownTo30MinSlot(new Date()));
+  const [invalidFields, setInvalidFields] = useState(() => new Set());
   const [resultTone, setResultTone] = useState('info');
   const [resultMessage, setResultMessage] = useState(() => {
     const now = new Date();
@@ -66,19 +122,86 @@ export default function SubmitReadingScreen({ navigation, site }) {
       roundDownTo30MinSlot(now)
     )}.`;
   });
+  const [slotStatusLoading, setSlotStatusLoading] = useState(false);
+  const [duplicateReading, setDuplicateReading] = useState(null);
+  const [latestReading, setLatestReading] = useState(null);
+  const [pendingSubmission, setPendingSubmission] = useState(null);
 
   const isChlorination = site?.type === 'CHLORINATION';
   const isDeepwell = site?.type === 'DEEPWELL';
   const parameterCount = isChlorination ? 11 : isDeepwell ? 10 : 0;
+  const shiftBatchEnabled = isShiftBatchEntryWindow(currentSlot);
+  const nextShiftBatchReadingText = nextShiftBatchEntryText(currentSlot);
+  const shiftBatchNoticeText = shiftBatchEnabled
+    ? 'Open for this shift.'
+    : 'Shift usage fields open during the hour before shift turnover.';
+  const currentShiftLabel = shiftNameForSlot(currentSlot);
+  const completionProgress = useMemo(() => {
+    const activeFields = isChlorination
+      ? [
+          ...CHLORINATION_BASE_FIELDS.map((key) => chlorination[key]),
+          ...(shiftBatchEnabled ? CHLORINATION_SHIFT_USAGE_FIELDS.map((key) => chlorination[key]) : []),
+        ]
+      : isDeepwell
+        ? [
+            ...DEEPWELL_BASE_FIELDS.map((key) => deepwell[key]),
+            ...(shiftBatchEnabled ? [deepwell.powerKwhShift] : []),
+          ]
+        : [];
+
+    return {
+      completed: activeFields.filter((value) => String(value ?? '').trim()).length,
+      total: activeFields.length,
+    };
+  }, [chlorination, deepwell, isChlorination, isDeepwell, shiftBatchEnabled]);
 
   useEffect(() => {
     refreshOfflineCount();
   }, []);
 
-  const slotPreview = useMemo(() => {
-    const now = new Date();
-    return formatTimestamp(roundDownTo30MinSlot(now));
-  }, [resultMessage]);
+  useEffect(() => {
+    refreshSlotStatus(currentSlot);
+  }, [currentSlot, site?.id, site?.type]);
+
+  useEffect(() => {
+    const intervalId = setInterval(() => {
+      setCurrentSlot(roundDownTo30MinSlot(new Date()));
+    }, 30000);
+
+    return () => clearInterval(intervalId);
+  }, []);
+
+  useEffect(() => {
+    if (shiftBatchEnabled) {
+      return;
+    }
+
+    setChlorination((current) => {
+      if (!current.chlorineConsumed && !current.peroxideConsumption && !current.powerConsumptionKwh) {
+        return current;
+      }
+
+      return {
+        ...current,
+        chlorineConsumed: '',
+        peroxideConsumption: '',
+        powerConsumptionKwh: '',
+      };
+    });
+
+    setDeepwell((current) => {
+      if (!current.powerKwhShift) {
+        return current;
+      }
+
+      return {
+        ...current,
+        powerKwhShift: '',
+      };
+    });
+  }, [shiftBatchEnabled]);
+
+  const slotPreview = useMemo(() => formatTimestamp(currentSlot), [currentSlot]);
 
   const deltaPressure = useMemo(() => {
     const up = parseNullableNumber(deepwell.upstreamPressure);
@@ -93,10 +216,12 @@ export default function SubmitReadingScreen({ navigation, site }) {
 
   function patchChlorination(key, value) {
     setChlorination((current) => ({ ...current, [key]: value }));
+    clearInvalidField(`chlorination.${key}`);
   }
 
   function patchDeepwell(key, value) {
     setDeepwell((current) => ({ ...current, [key]: value }));
+    clearInvalidField(`deepwell.${key}`);
   }
 
   function setFieldRef(key, ref) {
@@ -109,6 +234,66 @@ export default function SubmitReadingScreen({ navigation, site }) {
     fieldRefs.current[key]?.focus?.();
   }
 
+  function scrollToResultMessage() {
+    setTimeout(() => {
+      const scrollView = screenScrollRef.current;
+
+      if (typeof scrollView?.scrollToPosition === 'function') {
+        scrollView.scrollToPosition(0, 0, true);
+        return;
+      }
+
+      if (typeof scrollView?.scrollTo === 'function') {
+        scrollView.scrollTo({ y: 0, animated: true });
+      }
+    }, 80);
+  }
+
+  function clearInvalidField(key) {
+    setInvalidFields((current) => {
+      if (!current.has(key)) {
+        return current;
+      }
+
+      const next = new Set(current);
+      next.delete(key);
+      return next;
+    });
+  }
+
+  function fieldHasError(key) {
+    return invalidFields.has(key);
+  }
+
+  function showValidationError(message, fieldKeys = []) {
+    setResultTone('error');
+    setResultMessage(message);
+    setInvalidFields(new Set(fieldKeys));
+
+    if (fieldKeys[0]) {
+      focusField(fieldKeys[0]);
+    }
+  }
+
+  function fillNoChlorinationUsage() {
+    setChlorination((current) => ({
+      ...current,
+      chlorineConsumed: '0',
+      peroxideConsumption: '0',
+      powerConsumptionKwh: '0',
+    }));
+    setInvalidFields((current) => {
+      const next = new Set(current);
+      CHLORINATION_SHIFT_USAGE_FIELDS.forEach((key) => next.delete(`chlorination.${key}`));
+      return next;
+    });
+  }
+
+  function fillNoDeepwellPowerUsage() {
+    setDeepwell((current) => ({ ...current, powerKwhShift: '0' }));
+    clearInvalidField('deepwell.powerKwhShift');
+  }
+
   async function refreshOfflineCount() {
     const nextCount = await getOfflineReadingCount();
     setOfflineCount(nextCount);
@@ -118,6 +303,7 @@ export default function SubmitReadingScreen({ navigation, site }) {
     setRemarks('');
     setChlorination(initialChlorinationState);
     setDeepwell(initialDeepwellState);
+    setInvalidFields(new Set());
   }
 
   async function handleSyncOfflineReadings() {
@@ -155,16 +341,135 @@ export default function SubmitReadingScreen({ navigation, site }) {
     }
   }
 
-  async function handleSubmit() {
+  async function refreshSlotStatus(slotDate = currentSlot) {
+    if (!site?.id || !site?.type || !slotDate) {
+      setDuplicateReading(null);
+      setLatestReading(null);
+      return;
+    }
+
+    setSlotStatusLoading(true);
+
+    try {
+      const [duplicate, latest] = await Promise.all([
+        getReadingForSlot({
+          siteId: site.id,
+          siteType: site.type,
+          slotIso: slotDate.toISOString(),
+        }),
+        getLatestReadingForSite({
+          siteId: site.id,
+          siteType: site.type,
+        }),
+      ]);
+
+      setDuplicateReading(duplicate);
+      setLatestReading(latest);
+    } catch (error) {
+      if (!isLikelyOfflineError(error)) {
+        setResultTone('error');
+        setResultMessage(error.message || 'Failed to check the current slot.');
+        scrollToResultMessage();
+      }
+      setDuplicateReading(null);
+      setLatestReading(null);
+    } finally {
+      setSlotStatusLoading(false);
+    }
+  }
+
+  function buildSubmissionSummary(payload, slotText, isSubmitShiftBatchSlot) {
+    const sections = [
+      {
+        title: 'Reading',
+        rows: [
+          ['Site', site?.name || 'Unknown site'],
+          ['Type', site?.type || 'Unknown type'],
+          ['Operator', profile?.full_name || profile?.email || '-'],
+        ],
+      },
+      {
+        title: 'Schedule',
+        rows: [
+          ['Slot', slotText],
+          ['Shift', shiftNameForSlot(new Date(payload.slot_datetime))],
+        ],
+      },
+    ];
+
+    if (isChlorination) {
+      sections.push({
+        title: 'Measurements',
+        rows: [
+          ['Totalizer', valueOrDash(payload.totalizer)],
+          ['Pressure', `${valueOrDash(payload.pressure_psi)} psi`],
+          ['RC', `${valueOrDash(payload.rc_ppm)} ppm`],
+          ['pH', valueOrDash(payload.ph)],
+          ['Turbidity', `${valueOrDash(payload.turbidity_ntu)} NTU`],
+          ['TDS', `${valueOrDash(payload.tds_ppm)} ppm`],
+          ['Tank level', `${valueOrDash(payload.tank_level_liters)} liters`],
+          ['Flowrate', `${valueOrDash(payload.flowrate_m3hr)} m3/hr`],
+        ],
+      });
+
+      if (isSubmitShiftBatchSlot) {
+        sections.push({
+          title: 'Shift Usage',
+          rows: [
+            ['Chlorine used', `${valueOrDash(payload.chlorine_consumed)} kg`],
+            ['Peroxide used', valueOrDash(payload.peroxide_consumption)],
+            ['Power used', `${valueOrDash(payload.chlorination_power_kwh)} kWh`],
+          ],
+        });
+      }
+    }
+
+    if (isDeepwell) {
+      sections.push({
+        title: 'Measurements',
+        rows: [
+          ['Upstream pressure', `${valueOrDash(payload.upstream_pressure_psi)} psi`],
+          ['Downstream pressure', `${valueOrDash(payload.downstream_pressure_psi)} psi`],
+          ['Flowrate', `${valueOrDash(payload.flowrate_m3hr)} m3/hr`],
+          ['VFD frequency', `${valueOrDash(payload.vfd_frequency_hz)} Hz`],
+          ['Voltage L1', `${valueOrDash(payload.voltage_l1_v)} V`],
+          ['Voltage L2', `${valueOrDash(payload.voltage_l2_v)} V`],
+          ['Voltage L3', `${valueOrDash(payload.voltage_l3_v)} V`],
+          ['Amperage', `${valueOrDash(payload.amperage_a)} A`],
+          ['TDS', `${valueOrDash(payload.tds_ppm)} ppm`],
+        ],
+      });
+
+      if (isSubmitShiftBatchSlot) {
+        sections.push({
+          title: 'Shift Usage',
+          rows: [['Shift power', `${valueOrDash(payload.power_kwh_shift)} kWh`]],
+        });
+      }
+    }
+
+    if (payload.remarks) {
+      sections.push({
+        title: 'Remarks',
+        rows: [['Note', payload.remarks]],
+      });
+    }
+
+    return sections;
+  }
+
+  function buildSubmissionPayload() {
     const actualNow = new Date();
-    const slotText = formatTimestamp(roundDownTo30MinSlot(actualNow));
+    const slotDate = roundDownTo30MinSlot(actualNow);
+    const slotText = formatTimestamp(slotDate);
+    const isSubmitShiftBatchSlot = isShiftBatchEntryWindow(slotDate);
 
     const payload = {
       site_id: site?.id,
       submitted_by: profile?.id,
       site_type: site?.type,
       reading_datetime: actualNow.toISOString(),
-      slot_datetime: roundDownTo30MinSlot(actualNow).toISOString(),
+      slot_datetime: slotDate.toISOString(),
     };
 
     if (remarks.trim()) {
@@ -184,10 +489,15 @@ export default function SubmitReadingScreen({ navigation, site }) {
       const peroxideConsumption = parseNullableNumber(chlorination.peroxideConsumption);
       const powerConsumptionKwh = parseNullableNumber(chlorination.powerConsumptionKwh);
 
-      if (totalizerVal === null) {
-        setResultTone('error');
-        setResultMessage('Totalizer is required for CHLORINATION.');
-        return;
+      const missing = CHLORINATION_REQUIRED_FIELDS
+        .filter(([, , stateKey]) => parseNullableNumber(chlorination[stateKey]) === null);
+
+      if (missing.length) {
+        showValidationError(
+          `Missing required CHLORINATION fields: ${missing.map(([, label]) => label).join(', ')}`,
+          missing.map(([key]) => key)
+        );
+        return null;
       }
 
       const numericValues = [
@@ -205,13 +515,15 @@ export default function SubmitReadingScreen({ navigation, site }) {
       if (numericValues.some((value) => value !== null && value < 0)) {
         setResultTone('error');
         setResultMessage('Chlorination values must not be negative.');
-        return;
+        scrollToResultMessage();
+        return null;
       }
 
       if (ph !== null && (ph < 0 || ph > 14)) {
         setResultTone('error');
         setResultMessage('pH must be between 0 and 14.');
-        return;
+        scrollToResultMessage();
+        return null;
       }
 
       payload.totalizer = totalizerVal;
@@ -222,40 +534,48 @@ export default function SubmitReadingScreen({ navigation, site }) {
       if (tds !== null) payload.tds_ppm = tds;
       if (tankLevel !== null) payload.tank_level_liters = tankLevel;
       if (flowrate !== null) payload.flowrate_m3hr = flowrate;
-      if (chlorineConsumed !== null) payload.chlorine_consumed = chlorineConsumed;
-      if (peroxideConsumption !== null) payload.peroxide_consumption = peroxideConsumption;
-      if (powerConsumptionKwh !== null) payload.chlorination_power_kwh = powerConsumptionKwh;
+      if (isSubmitShiftBatchSlot) {
+        if (chlorineConsumed !== null) payload.chlorine_consumed = chlorineConsumed;
+        if (peroxideConsumption !== null) payload.peroxide_consumption = peroxideConsumption;
+        if (powerConsumptionKwh !== null) payload.chlorination_power_kwh = powerConsumptionKwh;
+      }
     }
 
     if (isDeepwell) {
       const requiredFields = [
-        ['Upstream Pressure (psi)', parseNullableNumber(deepwell.upstreamPressure)],
-        ['Downstream Pressure (psi)', parseNullableNumber(deepwell.downstreamPressure)],
-        ['Flowrate (m3/hr)', parseNullableNumber(deepwell.flowrate)],
-        ['VFD Frequency (Hz)', parseNullableNumber(deepwell.vfdHz)],
-        ['Voltage L1 (V)', parseNullableNumber(deepwell.voltL1)],
-        ['Voltage L2 (V)', parseNullableNumber(deepwell.voltL2)],
-        ['Voltage L3 (V)', parseNullableNumber(deepwell.voltL3)],
-        ['Amperage (A)', parseNullableNumber(deepwell.amperage)],
-        ['TDS (ppm)', parseNullableNumber(deepwell.tds)],
-        ['Power Reading per Shift (kWh)', parseNullableNumber(deepwell.powerKwhShift)],
+        ['deepwell.upstreamPressure', 'Upstream Pressure (psi)', parseNullableNumber(deepwell.upstreamPressure)],
+        ['deepwell.downstreamPressure', 'Downstream Pressure (psi)', parseNullableNumber(deepwell.downstreamPressure)],
+        ['deepwell.flowrate', 'Flowrate (m3/hr)', parseNullableNumber(deepwell.flowrate)],
+        ['deepwell.vfdHz', 'VFD Frequency (Hz)', parseNullableNumber(deepwell.vfdHz)],
+        ['deepwell.voltL1', 'Voltage L1 (V)', parseNullableNumber(deepwell.voltL1)],
+        ['deepwell.voltL2', 'Voltage L2 (V)', parseNullableNumber(deepwell.voltL2)],
+        ['deepwell.voltL3', 'Voltage L3 (V)', parseNullableNumber(deepwell.voltL3)],
+        ['deepwell.amperage', 'Amperage (A)', parseNullableNumber(deepwell.amperage)],
+        ['deepwell.tds', 'TDS (ppm)', parseNullableNumber(deepwell.tds)],
       ];
+      const powerKwhShift = parseNullableNumber(deepwell.powerKwhShift);
 
-      const missing = requiredFields
-        .filter(([, value]) => value === null)
-        .map(([label]) => label);
-
-      if (missing.length) {
-        setResultTone('error');
-        setResultMessage(`Missing required DEEPWELL fields: ${missing.join(', ')}`);
-        return;
+      if (isSubmitShiftBatchSlot) {
+        requiredFields.push(['deepwell.powerKwhShift', 'Power Reading per Shift (kWh)', powerKwhShift]);
       }
 
-      const values = requiredFields.map(([, value]) => value);
+      const missing = requiredFields
+        .filter(([, , value]) => value === null);
+
+      if (missing.length) {
+        showValidationError(
+          `Missing required DEEPWELL fields: ${missing.map(([, label]) => label).join(', ')}`,
+          missing.map(([key]) => key)
+        );
+        return null;
+      }
+
+      const values = requiredFields.map(([, , value]) => value);
       if (values.some((value) => value < 0)) {
         setResultTone('error');
         setResultMessage('Deepwell values must not be negative.');
-        return;
+        scrollToResultMessage();
+        return null;
       }
 
       payload.upstream_pressure_psi = values[0];
@@ -267,17 +587,89 @@ export default function SubmitReadingScreen({ navigation, site }) {
       payload.voltage_l3_v = values[6];
       payload.amperage_a = values[7];
       payload.tds_ppm = values[8];
-      payload.power_kwh_shift = values[9];
+      if (isSubmitShiftBatchSlot) {
+        payload.power_kwh_shift = powerKwhShift;
+      }
     }
 
+    return {
+      payload,
+      slotDate,
+      slotText,
+      summaryRows: buildSubmissionSummary(payload, slotText, isSubmitShiftBatchSlot),
+    };
+  }
+
+  async function handleSubmit() {
+    if (submitting || slotStatusLoading) {
+      return;
+    }
+
+    const submission = buildSubmissionPayload();
+
+    if (!submission) {
+      return;
+    }
+
+    try {
+      const duplicate = await getReadingForSlot({
+        siteId: site?.id,
+        siteType: site?.type,
+        slotIso: submission.payload.slot_datetime,
+      });
+
+      if (duplicate) {
+        setDuplicateReading(duplicate);
+        setResultTone('error');
+        setResultMessage(
+          `A reading already exists for slot ${submission.slotText}. Saved by ${readingOperatorName(duplicate)}.`
+        );
+        scrollToResultMessage();
+        return;
+      }
+    } catch (error) {
+      if (!isLikelyOfflineError(error)) {
+        setResultTone('error');
+        setResultMessage(error.message || 'Failed to check for duplicate readings.');
+        scrollToResultMessage();
+        return;
+      }
+    }
+
+    setPendingSubmission(submission);
+  }
+
+  async function handleConfirmSubmit() {
+    if (!pendingSubmission || submitting) {
+      return;
+    }
+
+    const { payload, slotDate, slotText } = pendingSubmission;
+    setPendingSubmission(null);
     setSubmitting(true);
 
     try {
+      const duplicate = await getReadingForSlot({
+        siteId: site?.id,
+        siteType: site?.type,
+        slotIso: payload.slot_datetime,
+      });
+
+      if (duplicate) {
+        setDuplicateReading(duplicate);
+        setResultTone('error');
+        setResultMessage(`A reading already exists for slot ${slotText}. Saved by ${readingOperatorName(duplicate)}.`);
+        scrollToResultMessage();
+        return;
+      }
+
       await createReading(payload);
       setShowSuccessAnim(true);
       setResultTone('success');
       setResultMessage(`Reading saved successfully. Saved under slot ${slotText}.`);
+      scrollToResultMessage();
       await clearForm();
+      await refreshSlotStatus(slotDate);
     } catch (error) {
       if (isLikelyOfflineError(error)) {
         const offlineSave = await enqueueOfflineReading(payload, {
@@ -291,11 +683,13 @@ export default function SubmitReadingScreen({ navigation, site }) {
         if (offlineSave.duplicate) {
           setResultTone('error');
           setResultMessage(`A reading is already saved offline for slot ${slotText}. Sync that saved reading before entering another record for this slot.`);
+          scrollToResultMessage();
           return;
         }
 
         setResultTone('success');
         setResultMessage(`No connection detected. Reading saved offline for slot ${slotText}. Sync it when the connection returns.`);
+        scrollToResultMessage();
         await clearForm();
         return;
       }
@@ -307,6 +701,7 @@ export default function SubmitReadingScreen({ navigation, site }) {
 
       setResultTone('error');
       setResultMessage(prettyMessage);
+      scrollToResultMessage();
     } finally {
       setSubmitting(false);
     }
@@ -347,6 +742,63 @@ export default function SubmitReadingScreen({ navigation, site }) {
           </View>
         )}
 
+      <Modal
+        visible={Boolean(pendingSubmission)}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setPendingSubmission(null)}
+      >
+        <View style={styles.modalBackdrop}>
+          <View style={styles.confirmCard}>
+            <View style={styles.confirmHeader}>
+              <View style={styles.confirmIcon}>
+                <Ionicons name="clipboard-outline" size={20} color={palette.ink900} />
+              </View>
+              <View style={styles.confirmCopy}>
+                <Text style={styles.confirmTitle}>Confirm reading</Text>
+                <Text style={styles.confirmBody}>Review the summary before saving this slot.</Text>
+              </View>
+            </View>
+
+            <ScrollView style={styles.confirmScroll} contentContainerStyle={styles.confirmSections}>
+              {(pendingSubmission?.summaryRows || []).map((section) => (
+                <View key={section.title} style={styles.confirmSection}>
+                  <Text style={styles.confirmSectionTitle}>{section.title}</Text>
+                  <View style={styles.confirmRows}>
+                    {section.rows.map(([label, value], index) => (
+                      <View
+                        key={label}
+                        style={[
+                          styles.confirmRow,
+                          index === section.rows.length - 1 ? styles.confirmRowLast : null,
+                        ]}
+                      >
+                        <Text style={styles.confirmLabel}>{label}</Text>
+                        <Text style={styles.confirmValue}>{value}</Text>
+                      </View>
+                    ))}
+                  </View>
+                </View>
+              ))}
+            </ScrollView>
+
+            <View style={styles.confirmActions}>
+              <PrimaryButton
+                label="Edit"
+                tone="secondary"
+                onPress={() => setPendingSubmission(null)}
+                icon={<Ionicons name="create-outline" size={16} color={palette.ink900} />}
+              />
+              <PrimaryButton
+                label="Confirm save"
+                onPress={handleConfirmSubmit}
+                icon={<Ionicons name="checkmark-outline" size={16} color={palette.onAccent} />}
+              />
+            </View>
+          </View>
+        </View>
+      </Modal>
+
       <ScreenShell
         eyebrow="Reading form"
         title="Submit reading"
@@ -356,6 +808,9 @@ export default function SubmitReadingScreen({ navigation, site }) {
         keyboardAware
         keyboardAwareProps={{
           keyboardOpeningTime: 0,
+          innerRef: (ref) => {
+            screenScrollRef.current = ref;
+          },
         }}
       >
         <Card style={styles.contextCard}>
@@ -383,13 +838,29 @@ export default function SubmitReadingScreen({ navigation, site }) {
               <Text style={styles.contextPillValue}>{site?.type || 'Unknown type'}</Text>
             </View>
             <View style={styles.contextPill}>
-              <Text style={styles.contextPillLabel}>Fields</Text>
-              <Text style={styles.contextPillValue}>{parameterCount}</Text>
+              <Text style={styles.contextPillLabel}>Shift</Text>
+              <Text style={styles.contextPillValue}>{currentShiftLabel}</Text>
+            </View>
+            <View style={styles.contextPill}>
+              <Text style={styles.contextPillLabel}>Completed</Text>
+              <Text style={styles.contextPillValue}>
+                {completionProgress.completed}/{completionProgress.total || parameterCount}
+              </Text>
             </View>
           </View>
         </Card>
       
         <MessageBanner tone={resultTone}>{resultMessage}</MessageBanner>
+
+        {duplicateReading ? (
+          <MessageBanner tone="error">
+            This slot is already saved by {readingOperatorName(duplicateReading)}. Submit is locked for this slot.
+          </MessageBanner>
+        ) : latestReading ? (
+          <MessageBanner tone="info">
+            Last submitted slot: {readingSlotText(latestReading)} by {readingOperatorName(latestReading)}.
+          </MessageBanner>
+        ) : null}
 
         {offlineCount ? (
           <Card style={styles.offlineCard}>
@@ -438,6 +909,7 @@ export default function SubmitReadingScreen({ navigation, site }) {
             label="Reading datetime"
             value={slotPreview}
             editable={false}
+            showLockedIndicator={false}
           />
 
           {isChlorination ? (
@@ -453,73 +925,117 @@ export default function SubmitReadingScreen({ navigation, site }) {
               </View>
               <FormField
                 ref={(ref) => setFieldRef('chlorination.pressure', ref)}
-                label="Pressure (psi)"
+                label="Pressure (psi) *"
                 value={chlorination.pressure}
                 onChangeText={(value) => patchChlorination('pressure', value)}
                 keyboardType="decimal-pad"
+                error={fieldHasError('chlorination.pressure')}
+                errorText={fieldHasError('chlorination.pressure') ? 'Required' : ''}
                 returnKeyType="next"
                 onSubmitEditing={() => focusField('chlorination.rc')}
               />
               <FormField
                 ref={(ref) => setFieldRef('chlorination.rc', ref)}
-                label="RC (Residual Chlorine) ppm"
+                label="RC (Residual Chlorine) ppm *"
                 value={chlorination.rc}
                 onChangeText={(value) => patchChlorination('rc', value)}
                 keyboardType="decimal-pad"
+                error={fieldHasError('chlorination.rc')}
+                errorText={fieldHasError('chlorination.rc') ? 'Required' : ''}
                 returnKeyType="next"
                 onSubmitEditing={() => focusField('chlorination.turbidity')}
               />
               <FormField
                 ref={(ref) => setFieldRef('chlorination.turbidity', ref)}
-                label="Turbidity (NTU)"
+                label="Turbidity (NTU) *"
                 value={chlorination.turbidity}
                 onChangeText={(value) => patchChlorination('turbidity', value)}
                 keyboardType="decimal-pad"
+                error={fieldHasError('chlorination.turbidity')}
+                errorText={fieldHasError('chlorination.turbidity') ? 'Required' : ''}
                 returnKeyType="next"
                 onSubmitEditing={() => focusField('chlorination.ph')}
               />
               <FormField
                 ref={(ref) => setFieldRef('chlorination.ph', ref)}
-                label="pH"
+                label="pH *"
                 value={chlorination.ph}
                 onChangeText={(value) => patchChlorination('ph', value)}
                 keyboardType="decimal-pad"
+                error={fieldHasError('chlorination.ph')}
+                errorText={fieldHasError('chlorination.ph') ? 'Required' : ''}
                 returnKeyType="next"
                 onSubmitEditing={() => focusField('chlorination.tds')}
               />
               <FormField
                 ref={(ref) => setFieldRef('chlorination.tds', ref)}
-                label="TDS (ppm)"
+                label="TDS (ppm) *"
                 value={chlorination.tds}
                 onChangeText={(value) => patchChlorination('tds', value)}
                 keyboardType="decimal-pad"
+                error={fieldHasError('chlorination.tds')}
+                errorText={fieldHasError('chlorination.tds') ? 'Required' : ''}
                 returnKeyType="next"
                 onSubmitEditing={() => focusField('chlorination.tankLevel')}
               />
               <FormField
                 ref={(ref) => setFieldRef('chlorination.tankLevel', ref)}
-                label="Tank level (liters)"
+                label="Tank level (liters) *"
                 value={chlorination.tankLevel}
                 onChangeText={(value) => patchChlorination('tankLevel', value)}
                 keyboardType="decimal-pad"
+                error={fieldHasError('chlorination.tankLevel')}
+                errorText={fieldHasError('chlorination.tankLevel') ? 'Required' : ''}
                 returnKeyType="next"
                 onSubmitEditing={() => focusField('chlorination.flowrate')}
               />
               <FormField
                 ref={(ref) => setFieldRef('chlorination.flowrate', ref)}
-                label="Flowrate (m3/hr)"
+                label="Flowrate (m3/hr) *"
                 value={chlorination.flowrate}
                 onChangeText={(value) => patchChlorination('flowrate', value)}
                 keyboardType="decimal-pad"
+                error={fieldHasError('chlorination.flowrate')}
+                errorText={fieldHasError('chlorination.flowrate') ? 'Required' : ''}
                 returnKeyType="next"
-                onSubmitEditing={() => focusField('chlorination.chlorineConsumed')}
+                onSubmitEditing={() =>
+                  focusField('chlorination.totalizer')
+                }
               />
+              <FormField
+                ref={(ref) => setFieldRef('chlorination.totalizer', ref)}
+                label="Totalizer *"
+                value={chlorination.totalizer}
+                onChangeText={(value) => patchChlorination('totalizer', value)}
+                keyboardType="decimal-pad"
+                error={fieldHasError('chlorination.totalizer')}
+                errorText={fieldHasError('chlorination.totalizer') ? 'Required' : ''}
+                returnKeyType="next"
+                onSubmitEditing={() =>
+                  focusField(shiftBatchEnabled ? 'chlorination.chlorineConsumed' : 'remarks')
+                }
+              />
+              <View style={styles.shiftUsageHeader}>
+                <View>
+                  <Text style={styles.shiftUsageTitle}>Shift Usage</Text>
+                  <Text style={styles.shiftUsageMeta}>Chemicals and Power</Text>
+                </View>
+                {shiftBatchEnabled ? (
+                  <Pressable onPress={fillNoChlorinationUsage} style={styles.zeroUsageButton}>
+                    <Ionicons name="ban-outline" size={14} color={palette.ink900} />
+                    <Text style={styles.zeroUsageText}>No usage</Text>
+                  </Pressable>
+                ) : null}
+              </View>
+              <MessageBanner tone={shiftBatchEnabled ? 'success' : 'info'}>{shiftBatchNoticeText}</MessageBanner>
               <FormField
                 ref={(ref) => setFieldRef('chlorination.chlorineConsumed', ref)}
                 label="Chlorine consumed (kg)"
                 value={chlorination.chlorineConsumed}
                 onChangeText={(value) => patchChlorination('chlorineConsumed', value)}
                 keyboardType="decimal-pad"
+                editable={shiftBatchEnabled}
+                placeholder={shiftBatchEnabled ? undefined : nextShiftBatchReadingText}
                 returnKeyType="next"
                 onSubmitEditing={() => focusField('chlorination.peroxideConsumption')}
               />
@@ -529,6 +1045,8 @@ export default function SubmitReadingScreen({ navigation, site }) {
                 value={chlorination.peroxideConsumption}
                 onChangeText={(value) => patchChlorination('peroxideConsumption', value)}
                 keyboardType="decimal-pad"
+                editable={shiftBatchEnabled}
+                placeholder={shiftBatchEnabled ? undefined : nextShiftBatchReadingText}
                 returnKeyType="next"
                 onSubmitEditing={() => focusField('chlorination.powerConsumptionKwh')}
               />
@@ -538,15 +1056,8 @@ export default function SubmitReadingScreen({ navigation, site }) {
                 value={chlorination.powerConsumptionKwh}
                 onChangeText={(value) => patchChlorination('powerConsumptionKwh', value)}
                 keyboardType="decimal-pad"
-                returnKeyType="next"
-                onSubmitEditing={() => focusField('chlorination.totalizer')}
-              />
-              <FormField
-                ref={(ref) => setFieldRef('chlorination.totalizer', ref)}
-                label="Totalizer (required)"
-                value={chlorination.totalizer}
-                onChangeText={(value) => patchChlorination('totalizer', value)}
-                keyboardType="decimal-pad"
+                editable={shiftBatchEnabled}
+                placeholder={shiftBatchEnabled ? undefined : nextShiftBatchReadingText}
                 returnKeyType="next"
                 onSubmitEditing={() => focusField('remarks')}
               />
@@ -566,19 +1077,23 @@ export default function SubmitReadingScreen({ navigation, site }) {
               </View>
               <FormField
                 ref={(ref) => setFieldRef('deepwell.upstreamPressure', ref)}
-                label="Upstream Pressure (psi)"
+                label="Upstream Pressure (psi) *"
                 value={deepwell.upstreamPressure}
                 onChangeText={(value) => patchDeepwell('upstreamPressure', value)}
                 keyboardType="decimal-pad"
+                error={fieldHasError('deepwell.upstreamPressure')}
+                errorText={fieldHasError('deepwell.upstreamPressure') ? 'Required' : ''}
                 returnKeyType="next"
                 onSubmitEditing={() => focusField('deepwell.downstreamPressure')}
               />
               <FormField
                 ref={(ref) => setFieldRef('deepwell.downstreamPressure', ref)}
-                label="Downstream Pressure (psi)"
+                label="Downstream Pressure (psi) *"
                 value={deepwell.downstreamPressure}
                 onChangeText={(value) => patchDeepwell('downstreamPressure', value)}
                 keyboardType="decimal-pad"
+                error={fieldHasError('deepwell.downstreamPressure')}
+                errorText={fieldHasError('deepwell.downstreamPressure') ? 'Required' : ''}
                 returnKeyType="next"
                 onSubmitEditing={() => focusField('deepwell.flowrate')}
               />
@@ -587,73 +1102,106 @@ export default function SubmitReadingScreen({ navigation, site }) {
               ) : null}
               <FormField
                 ref={(ref) => setFieldRef('deepwell.flowrate', ref)}
-                label="Flowrate (m3/hr)"
+                label="Flowrate (m3/hr) *"
                 value={deepwell.flowrate}
                 onChangeText={(value) => patchDeepwell('flowrate', value)}
                 keyboardType="decimal-pad"
+                error={fieldHasError('deepwell.flowrate')}
+                errorText={fieldHasError('deepwell.flowrate') ? 'Required' : ''}
                 returnKeyType="next"
                 onSubmitEditing={() => focusField('deepwell.vfdHz')}
               />
               <FormField
                 ref={(ref) => setFieldRef('deepwell.vfdHz', ref)}
-                label="VFD Frequency (Hz)"
+                label="VFD Frequency (Hz) *"
                 value={deepwell.vfdHz}
                 onChangeText={(value) => patchDeepwell('vfdHz', value)}
                 keyboardType="decimal-pad"
+                error={fieldHasError('deepwell.vfdHz')}
+                errorText={fieldHasError('deepwell.vfdHz') ? 'Required' : ''}
                 returnKeyType="next"
                 onSubmitEditing={() => focusField('deepwell.voltL1')}
               />
               <FormField
                 ref={(ref) => setFieldRef('deepwell.voltL1', ref)}
-                label="Voltage L1 (V)"
+                label="Voltage L1 (V) *"
                 value={deepwell.voltL1}
                 onChangeText={(value) => patchDeepwell('voltL1', value)}
                 keyboardType="decimal-pad"
+                error={fieldHasError('deepwell.voltL1')}
+                errorText={fieldHasError('deepwell.voltL1') ? 'Required' : ''}
                 returnKeyType="next"
                 onSubmitEditing={() => focusField('deepwell.voltL2')}
               />
               <FormField
                 ref={(ref) => setFieldRef('deepwell.voltL2', ref)}
-                label="Voltage L2 (V)"
+                label="Voltage L2 (V) *"
                 value={deepwell.voltL2}
                 onChangeText={(value) => patchDeepwell('voltL2', value)}
                 keyboardType="decimal-pad"
+                error={fieldHasError('deepwell.voltL2')}
+                errorText={fieldHasError('deepwell.voltL2') ? 'Required' : ''}
                 returnKeyType="next"
                 onSubmitEditing={() => focusField('deepwell.voltL3')}
               />
               <FormField
                 ref={(ref) => setFieldRef('deepwell.voltL3', ref)}
-                label="Voltage L3 (V)"
+                label="Voltage L3 (V) *"
                 value={deepwell.voltL3}
                 onChangeText={(value) => patchDeepwell('voltL3', value)}
                 keyboardType="decimal-pad"
+                error={fieldHasError('deepwell.voltL3')}
+                errorText={fieldHasError('deepwell.voltL3') ? 'Required' : ''}
                 returnKeyType="next"
                 onSubmitEditing={() => focusField('deepwell.amperage')}
               />
               <FormField
                 ref={(ref) => setFieldRef('deepwell.amperage', ref)}
-                label="Amperage (A)"
+                label="Amperage (A) *"
                 value={deepwell.amperage}
                 onChangeText={(value) => patchDeepwell('amperage', value)}
                 keyboardType="decimal-pad"
+                error={fieldHasError('deepwell.amperage')}
+                errorText={fieldHasError('deepwell.amperage') ? 'Required' : ''}
                 returnKeyType="next"
                 onSubmitEditing={() => focusField('deepwell.tds')}
               />
               <FormField
                 ref={(ref) => setFieldRef('deepwell.tds', ref)}
-                label="TDS (ppm)"
+                label="TDS (ppm) *"
                 value={deepwell.tds}
                 onChangeText={(value) => patchDeepwell('tds', value)}
                 keyboardType="decimal-pad"
+                error={fieldHasError('deepwell.tds')}
+                errorText={fieldHasError('deepwell.tds') ? 'Required' : ''}
                 returnKeyType="next"
-                onSubmitEditing={() => focusField('deepwell.powerKwhShift')}
+                onSubmitEditing={() =>
+                  focusField(shiftBatchEnabled ? 'deepwell.powerKwhShift' : 'remarks')
+                }
               />
+              <View style={styles.shiftUsageHeader}>
+                <View>
+                  <Text style={styles.shiftUsageTitle}>Shift Usage</Text>
+                  <Text style={styles.shiftUsageMeta}>Power consumption</Text>
+                </View>
+                {shiftBatchEnabled ? (
+                  <Pressable onPress={fillNoDeepwellPowerUsage} style={styles.zeroUsageButton}>
+                    <Ionicons name="ban-outline" size={14} color={palette.ink900} />
+                    <Text style={styles.zeroUsageText}>No usage</Text>
+                  </Pressable>
+                ) : null}
+              </View>
+              <MessageBanner tone={shiftBatchEnabled ? 'success' : 'info'}>{shiftBatchNoticeText}</MessageBanner>
               <FormField
                 ref={(ref) => setFieldRef('deepwell.powerKwhShift', ref)}
                 label="Power Reading per Shift (kWh)"
                 value={deepwell.powerKwhShift}
                 onChangeText={(value) => patchDeepwell('powerKwhShift', value)}
                 keyboardType="decimal-pad"
+                editable={shiftBatchEnabled}
+                placeholder={shiftBatchEnabled ? undefined : nextShiftBatchReadingText}
+                error={fieldHasError('deepwell.powerKwhShift')}
+                errorText={fieldHasError('deepwell.powerKwhShift') ? 'Required' : ''}
                 returnKeyType="next"
                 onSubmitEditing={() => focusField('remarks')}
               />
@@ -684,9 +1232,18 @@ export default function SubmitReadingScreen({ navigation, site }) {
             icon={<Ionicons name="arrow-back-outline" size={16} color={palette.ink900} />}
           />
           <PrimaryButton
-            label={submitting ? 'Submitting...' : 'Submit reading'}
+            label={
+              submitting
+                ? 'Submitting...'
+                : slotStatusLoading
+                  ? 'Checking slot...'
+                  : duplicateReading
+                    ? 'Slot already saved'
+                    : 'Review and submit'
+            }
             onPress={handleSubmit}
             loading={submitting}
+            disabled={slotStatusLoading || Boolean(duplicateReading)}
             icon={<Ionicons name="save-outline" size={16} color={palette.onAccent} />}
           />
         </View>
@@ -699,6 +1256,105 @@ function createStyles(palette, isDark) {
   return StyleSheet.create({
     keyboardWrap: {
       flex: 1,
+    },
+    modalBackdrop: {
+      flex: 1,
+      justifyContent: 'center',
+      backgroundColor: 'rgba(0, 0, 0, 0.52)',
+      padding: 18,
+    },
+    confirmCard: {
+      maxHeight: '86%',
+      borderRadius: 14,
+      borderWidth: 1,
+      borderColor: palette.line,
+      backgroundColor: palette.card,
+      padding: 16,
+      gap: 14,
+    },
+    confirmHeader: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 10,
+    },
+    confirmIcon: {
+      width: 38,
+      height: 38,
+      borderRadius: 999,
+      alignItems: 'center',
+      justifyContent: 'center',
+      backgroundColor: isDark ? '#16304A' : '#EAF2FB',
+      borderWidth: 1,
+      borderColor: isDark ? '#31506E' : '#C9DDF3',
+    },
+    confirmCopy: {
+      flex: 1,
+      gap: 2,
+    },
+    confirmTitle: {
+      color: palette.ink900,
+      fontSize: 18,
+      fontWeight: '900',
+    },
+    confirmBody: {
+      color: palette.ink700,
+      fontSize: 12,
+      lineHeight: 18,
+    },
+    confirmScroll: {
+      maxHeight: 430,
+    },
+    confirmSections: {
+      gap: 12,
+      paddingBottom: 2,
+    },
+    confirmSection: {
+      gap: 8,
+    },
+    confirmSectionTitle: {
+      color: palette.ink500,
+      fontSize: 11,
+      fontWeight: '900',
+      textTransform: 'uppercase',
+      letterSpacing: 0.5,
+    },
+    confirmRows: {
+      borderRadius: 10,
+      borderWidth: 1,
+      borderColor: palette.line,
+      overflow: 'hidden',
+      backgroundColor: isDark ? '#0C1621' : '#F8FBFF',
+    },
+    confirmRow: {
+      flexDirection: 'row',
+      alignItems: 'flex-start',
+      justifyContent: 'space-between',
+      gap: 12,
+      paddingHorizontal: 14,
+      paddingVertical: 9,
+      borderBottomWidth: 1,
+      borderBottomColor: palette.line,
+    },
+    confirmRowLast: {
+      borderBottomWidth: 0,
+    },
+    confirmLabel: {
+      flex: 0.44,
+      color: palette.ink500,
+      fontSize: 12,
+      lineHeight: 17,
+      fontWeight: '700',
+    },
+    confirmValue: {
+      flex: 0.56,
+      color: palette.ink900,
+      fontSize: 12,
+      lineHeight: 17,
+      fontWeight: '800',
+      textAlign: 'right',
+    },
+    confirmActions: {
+      gap: 10,
     },
     contextCard: {
       gap: 12,
@@ -893,6 +1549,42 @@ function createStyles(palette, isDark) {
       color: palette.ink700,
       fontSize: 12,
       lineHeight: 18,
+    },
+    shiftUsageHeader: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      gap: 10,
+      paddingTop: 4,
+    },
+    shiftUsageTitle: {
+      color: palette.ink900,
+      fontSize: 14,
+      fontWeight: '900',
+      textTransform: 'uppercase',
+      letterSpacing: 0.5,
+    },
+    shiftUsageMeta: {
+      marginTop: 2,
+      color: palette.ink700,
+      fontSize: 12,
+      fontWeight: '600',
+    },
+    zeroUsageButton: {
+      minHeight: 34,
+      borderRadius: 999,
+      borderWidth: 1,
+      borderColor: isDark ? '#1A655E' : '#B4E5DE',
+      backgroundColor: isDark ? '#11312D' : '#E5F5F3',
+      paddingHorizontal: 12,
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 6,
+    },
+    zeroUsageText: {
+      color: palette.ink900,
+      fontSize: 12,
+      fontWeight: '900',
     },
     actions: {
       gap: 12,

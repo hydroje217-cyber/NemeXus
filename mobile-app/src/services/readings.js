@@ -6,6 +6,19 @@ const CHLORINATION_SELECT =
 const DEEPWELL_SELECT =
   'id, site_id, reading_datetime, slot_datetime, created_at, remarks, upstream_pressure_psi, downstream_pressure_psi, flowrate_m3hr, vfd_frequency_hz, voltage_l1_v, voltage_l2_v, voltage_l3_v, amperage_a, tds_ppm, power_kwh_shift, status, sites(id, name, type), submitted_profile:profiles!deepwell_readings_submitted_by_fkey(full_name, email)';
 
+const READING_META = {
+  CHLORINATION: {
+    tableName: 'chlorination_readings',
+    select:
+      'id, site_id, reading_datetime, slot_datetime, created_at, submitted_profile:profiles!chlorination_readings_submitted_by_fkey(full_name, email)',
+  },
+  DEEPWELL: {
+    tableName: 'deepwell_readings',
+    select:
+      'id, site_id, reading_datetime, slot_datetime, created_at, submitted_profile:profiles!deepwell_readings_submitted_by_fkey(full_name, email)',
+  },
+};
+
 function normalizeReading(row, siteType) {
   return {
     ...row,
@@ -91,6 +104,49 @@ export async function createReading(payload) {
   }
 
   return data;
+}
+
+export async function getReadingForSlot({ siteId, siteType, slotIso }) {
+  const meta = READING_META[siteType];
+
+  if (!meta || !siteId || !slotIso) {
+    return null;
+  }
+
+  const { data, error } = await supabase
+    .from(meta.tableName)
+    .select(meta.select)
+    .eq('site_id', siteId)
+    .eq('slot_datetime', slotIso)
+    .maybeSingle();
+
+  if (error) {
+    throw error;
+  }
+
+  return data ? normalizeReading(data, siteType) : null;
+}
+
+export async function getLatestReadingForSite({ siteId, siteType }) {
+  const meta = READING_META[siteType];
+
+  if (!meta || !siteId) {
+    return null;
+  }
+
+  const { data, error } = await supabase
+    .from(meta.tableName)
+    .select(meta.select)
+    .eq('site_id', siteId)
+    .order('slot_datetime', { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  if (error) {
+    throw error;
+  }
+
+  return data ? normalizeReading(data, siteType) : null;
 }
 
 export async function listReadings({ siteId, siteType, fromDate, toDate, limit }) {
