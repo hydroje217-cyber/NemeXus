@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { KeyboardAvoidingView, Platform, Pressable, StyleSheet, Text, View } from 'react-native';
+import { KeyboardAvoidingView, Modal, Platform, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import Ionicons from '@expo/vector-icons/Ionicons';
 import Card from '../components/Card';
 import FormField from '../components/FormField';
@@ -14,7 +14,7 @@ import {
   isLikelyOfflineError,
   syncOfflineReadings,
 } from '../services/offlineReadings';
-import { createReading } from '../services/readings';
+import { createReading, getLatestReadingForSite, getReadingForSlot } from '../services/readings';
 import { parseNullableNumber } from '../utils/readings';
 import { isShiftBatchEntryWindow, nextShiftBatchEntryText, shiftNameForSlot } from '../utils/shiftSchedule';
 import { formatTimestamp, roundDownTo30MinSlot } from '../utils/time';
@@ -59,6 +59,18 @@ const DEEPWELL_BASE_FIELDS = [
   'amperage',
   'tds',
 ];
+
+function readingOperatorName(reading) {
+  return reading?.submitted_profile?.full_name || reading?.submitted_profile?.email || 'another operator';
+}
+
+function readingSlotText(reading) {
+  return reading?.slot_datetime ? formatTimestamp(new Date(reading.slot_datetime)) : '-';
+}
+
+function valueOrDash(value) {
+  return value === null || value === undefined || value === '' ? '-' : String(value);
+}
 
 const initialChlorinationState = {
   totalizer: '',
@@ -110,6 +122,10 @@ export default function SubmitReadingScreen({ navigation, site }) {
       roundDownTo30MinSlot(now)
     )}.`;
   });
+  const [slotStatusLoading, setSlotStatusLoading] = useState(false);
+  const [duplicateReading, setDuplicateReading] = useState(null);
+  const [latestReading, setLatestReading] = useState(null);
+  const [pendingSubmission, setPendingSubmission] = useState(null);
 
   const isChlorination = site?.type === 'CHLORINATION';
   const isDeepwell = site?.type === 'DEEPWELL';
@@ -142,6 +158,10 @@ export default function SubmitReadingScreen({ navigation, site }) {
   useEffect(() => {
     refreshOfflineCount();
   }, []);
+
+  useEffect(() => {
+    refreshSlotStatus(currentSlot);
+  }, [currentSlot, site?.id, site?.type]);
 
   useEffect(() => {
     const intervalId = setInterval(() => {
@@ -321,7 +341,124 @@ export default function SubmitReadingScreen({ navigation, site }) {
     }
   }
 
-  async function handleSubmit() {
+  async function refreshSlotStatus(slotDate = currentSlot) {
+    if (!site?.id || !site?.type || !slotDate) {
+      setDuplicateReading(null);
+      setLatestReading(null);
+      return;
+    }
+
+    setSlotStatusLoading(true);
+
+    try {
+      const [duplicate, latest] = await Promise.all([
+        getReadingForSlot({
+          siteId: site.id,
+          siteType: site.type,
+          slotIso: slotDate.toISOString(),
+        }),
+        getLatestReadingForSite({
+          siteId: site.id,
+          siteType: site.type,
+        }),
+      ]);
+
+      setDuplicateReading(duplicate);
+      setLatestReading(latest);
+    } catch (error) {
+      if (!isLikelyOfflineError(error)) {
+        setResultTone('error');
+        setResultMessage(error.message || 'Failed to check the current slot.');
+        scrollToResultMessage();
+      }
+      setDuplicateReading(null);
+      setLatestReading(null);
+    } finally {
+      setSlotStatusLoading(false);
+    }
+  }
+
+  function buildSubmissionSummary(payload, slotText, isSubmitShiftBatchSlot) {
+    const sections = [
+      {
+        title: 'Reading',
+        rows: [
+          ['Site', site?.name || 'Unknown site'],
+          ['Type', site?.type || 'Unknown type'],
+          ['Operator', profile?.full_name || profile?.email || '-'],
+        ],
+      },
+      {
+        title: 'Schedule',
+        rows: [
+          ['Slot', slotText],
+          ['Shift', shiftNameForSlot(new Date(payload.slot_datetime))],
+        ],
+      },
+    ];
+
+    if (isChlorination) {
+      sections.push({
+        title: 'Measurements',
+        rows: [
+          ['Totalizer', valueOrDash(payload.totalizer)],
+          ['Pressure', `${valueOrDash(payload.pressure_psi)} psi`],
+          ['RC', `${valueOrDash(payload.rc_ppm)} ppm`],
+          ['pH', valueOrDash(payload.ph)],
+          ['Turbidity', `${valueOrDash(payload.turbidity_ntu)} NTU`],
+          ['TDS', `${valueOrDash(payload.tds_ppm)} ppm`],
+          ['Tank level', `${valueOrDash(payload.tank_level_liters)} liters`],
+          ['Flowrate', `${valueOrDash(payload.flowrate_m3hr)} m3/hr`],
+        ],
+      });
+
+      if (isSubmitShiftBatchSlot) {
+        sections.push({
+          title: 'Shift Usage',
+          rows: [
+            ['Chlorine used', `${valueOrDash(payload.chlorine_consumed)} kg`],
+            ['Peroxide used', valueOrDash(payload.peroxide_consumption)],
+            ['Power used', `${valueOrDash(payload.chlorination_power_kwh)} kWh`],
+          ],
+        });
+      }
+    }
+
+    if (isDeepwell) {
+      sections.push({
+        title: 'Measurements',
+        rows: [
+          ['Upstream pressure', `${valueOrDash(payload.upstream_pressure_psi)} psi`],
+          ['Downstream pressure', `${valueOrDash(payload.downstream_pressure_psi)} psi`],
+          ['Flowrate', `${valueOrDash(payload.flowrate_m3hr)} m3/hr`],
+          ['VFD frequency', `${valueOrDash(payload.vfd_frequency_hz)} Hz`],
+          ['Voltage L1', `${valueOrDash(payload.voltage_l1_v)} V`],
+          ['Voltage L2', `${valueOrDash(payload.voltage_l2_v)} V`],
+          ['Voltage L3', `${valueOrDash(payload.voltage_l3_v)} V`],
+          ['Amperage', `${valueOrDash(payload.amperage_a)} A`],
+          ['TDS', `${valueOrDash(payload.tds_ppm)} ppm`],
+        ],
+      });
+
+      if (isSubmitShiftBatchSlot) {
+        sections.push({
+          title: 'Shift Usage',
+          rows: [['Shift power', `${valueOrDash(payload.power_kwh_shift)} kWh`]],
+        });
+      }
+    }
+
+    if (payload.remarks) {
+      sections.push({
+        title: 'Remarks',
+        rows: [['Note', payload.remarks]],
+      });
+    }
+
+    return sections;
+  }
+
+  function buildSubmissionPayload() {
     const actualNow = new Date();
     const slotDate = roundDownTo30MinSlot(actualNow);
     const slotText = formatTimestamp(slotDate);
@@ -360,7 +497,7 @@ export default function SubmitReadingScreen({ navigation, site }) {
           `Missing required CHLORINATION fields: ${missing.map(([, label]) => label).join(', ')}`,
           missing.map(([key]) => key)
         );
-        return;
+        return null;
       }
 
       const numericValues = [
@@ -379,14 +516,14 @@ export default function SubmitReadingScreen({ navigation, site }) {
         setResultTone('error');
         setResultMessage('Chlorination values must not be negative.');
         scrollToResultMessage();
-        return;
+        return null;
       }
 
       if (ph !== null && (ph < 0 || ph > 14)) {
         setResultTone('error');
         setResultMessage('pH must be between 0 and 14.');
         scrollToResultMessage();
-        return;
+        return null;
       }
 
       payload.totalizer = totalizerVal;
@@ -430,7 +567,7 @@ export default function SubmitReadingScreen({ navigation, site }) {
           `Missing required DEEPWELL fields: ${missing.map(([, label]) => label).join(', ')}`,
           missing.map(([key]) => key)
         );
-        return;
+        return null;
       }
 
       const values = requiredFields.map(([, , value]) => value);
@@ -438,7 +575,7 @@ export default function SubmitReadingScreen({ navigation, site }) {
         setResultTone('error');
         setResultMessage('Deepwell values must not be negative.');
         scrollToResultMessage();
-        return;
+        return null;
       }
 
       payload.upstream_pressure_psi = values[0];
@@ -455,15 +592,84 @@ export default function SubmitReadingScreen({ navigation, site }) {
       }
     }
 
+    return {
+      payload,
+      slotDate,
+      slotText,
+      summaryRows: buildSubmissionSummary(payload, slotText, isSubmitShiftBatchSlot),
+    };
+  }
+
+  async function handleSubmit() {
+    if (submitting || slotStatusLoading) {
+      return;
+    }
+
+    const submission = buildSubmissionPayload();
+
+    if (!submission) {
+      return;
+    }
+
+    try {
+      const duplicate = await getReadingForSlot({
+        siteId: site?.id,
+        siteType: site?.type,
+        slotIso: submission.payload.slot_datetime,
+      });
+
+      if (duplicate) {
+        setDuplicateReading(duplicate);
+        setResultTone('error');
+        setResultMessage(
+          `A reading already exists for slot ${submission.slotText}. Saved by ${readingOperatorName(duplicate)}.`
+        );
+        scrollToResultMessage();
+        return;
+      }
+    } catch (error) {
+      if (!isLikelyOfflineError(error)) {
+        setResultTone('error');
+        setResultMessage(error.message || 'Failed to check for duplicate readings.');
+        scrollToResultMessage();
+        return;
+      }
+    }
+
+    setPendingSubmission(submission);
+  }
+
+  async function handleConfirmSubmit() {
+    if (!pendingSubmission || submitting) {
+      return;
+    }
+
+    const { payload, slotDate, slotText } = pendingSubmission;
+    setPendingSubmission(null);
     setSubmitting(true);
 
     try {
+      const duplicate = await getReadingForSlot({
+        siteId: site?.id,
+        siteType: site?.type,
+        slotIso: payload.slot_datetime,
+      });
+
+      if (duplicate) {
+        setDuplicateReading(duplicate);
+        setResultTone('error');
+        setResultMessage(`A reading already exists for slot ${slotText}. Saved by ${readingOperatorName(duplicate)}.`);
+        scrollToResultMessage();
+        return;
+      }
+
       await createReading(payload);
       setShowSuccessAnim(true);
       setResultTone('success');
       setResultMessage(`Reading saved successfully. Saved under slot ${slotText}.`);
       scrollToResultMessage();
       await clearForm();
+      await refreshSlotStatus(slotDate);
     } catch (error) {
       if (isLikelyOfflineError(error)) {
         const offlineSave = await enqueueOfflineReading(payload, {
@@ -536,6 +742,63 @@ export default function SubmitReadingScreen({ navigation, site }) {
           </View>
         )}
 
+      <Modal
+        visible={Boolean(pendingSubmission)}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setPendingSubmission(null)}
+      >
+        <View style={styles.modalBackdrop}>
+          <View style={styles.confirmCard}>
+            <View style={styles.confirmHeader}>
+              <View style={styles.confirmIcon}>
+                <Ionicons name="clipboard-outline" size={20} color={palette.ink900} />
+              </View>
+              <View style={styles.confirmCopy}>
+                <Text style={styles.confirmTitle}>Confirm reading</Text>
+                <Text style={styles.confirmBody}>Review the summary before saving this slot.</Text>
+              </View>
+            </View>
+
+            <ScrollView style={styles.confirmScroll} contentContainerStyle={styles.confirmSections}>
+              {(pendingSubmission?.summaryRows || []).map((section) => (
+                <View key={section.title} style={styles.confirmSection}>
+                  <Text style={styles.confirmSectionTitle}>{section.title}</Text>
+                  <View style={styles.confirmRows}>
+                    {section.rows.map(([label, value], index) => (
+                      <View
+                        key={label}
+                        style={[
+                          styles.confirmRow,
+                          index === section.rows.length - 1 ? styles.confirmRowLast : null,
+                        ]}
+                      >
+                        <Text style={styles.confirmLabel}>{label}</Text>
+                        <Text style={styles.confirmValue}>{value}</Text>
+                      </View>
+                    ))}
+                  </View>
+                </View>
+              ))}
+            </ScrollView>
+
+            <View style={styles.confirmActions}>
+              <PrimaryButton
+                label="Edit"
+                tone="secondary"
+                onPress={() => setPendingSubmission(null)}
+                icon={<Ionicons name="create-outline" size={16} color={palette.ink900} />}
+              />
+              <PrimaryButton
+                label="Confirm save"
+                onPress={handleConfirmSubmit}
+                icon={<Ionicons name="checkmark-outline" size={16} color={palette.onAccent} />}
+              />
+            </View>
+          </View>
+        </View>
+      </Modal>
+
       <ScreenShell
         eyebrow="Reading form"
         title="Submit reading"
@@ -588,6 +851,16 @@ export default function SubmitReadingScreen({ navigation, site }) {
         </Card>
       
         <MessageBanner tone={resultTone}>{resultMessage}</MessageBanner>
+
+        {duplicateReading ? (
+          <MessageBanner tone="error">
+            This slot is already saved by {readingOperatorName(duplicateReading)}. Submit is locked for this slot.
+          </MessageBanner>
+        ) : latestReading ? (
+          <MessageBanner tone="info">
+            Last submitted slot: {readingSlotText(latestReading)} by {readingOperatorName(latestReading)}.
+          </MessageBanner>
+        ) : null}
 
         {offlineCount ? (
           <Card style={styles.offlineCard}>
@@ -959,9 +1232,18 @@ export default function SubmitReadingScreen({ navigation, site }) {
             icon={<Ionicons name="arrow-back-outline" size={16} color={palette.ink900} />}
           />
           <PrimaryButton
-            label={submitting ? 'Submitting...' : 'Submit reading'}
+            label={
+              submitting
+                ? 'Submitting...'
+                : slotStatusLoading
+                  ? 'Checking slot...'
+                  : duplicateReading
+                    ? 'Slot already saved'
+                    : 'Review and submit'
+            }
             onPress={handleSubmit}
             loading={submitting}
+            disabled={slotStatusLoading || Boolean(duplicateReading)}
             icon={<Ionicons name="save-outline" size={16} color={palette.onAccent} />}
           />
         </View>
@@ -974,6 +1256,105 @@ function createStyles(palette, isDark) {
   return StyleSheet.create({
     keyboardWrap: {
       flex: 1,
+    },
+    modalBackdrop: {
+      flex: 1,
+      justifyContent: 'center',
+      backgroundColor: 'rgba(0, 0, 0, 0.52)',
+      padding: 18,
+    },
+    confirmCard: {
+      maxHeight: '86%',
+      borderRadius: 14,
+      borderWidth: 1,
+      borderColor: palette.line,
+      backgroundColor: palette.card,
+      padding: 16,
+      gap: 14,
+    },
+    confirmHeader: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 10,
+    },
+    confirmIcon: {
+      width: 38,
+      height: 38,
+      borderRadius: 999,
+      alignItems: 'center',
+      justifyContent: 'center',
+      backgroundColor: isDark ? '#16304A' : '#EAF2FB',
+      borderWidth: 1,
+      borderColor: isDark ? '#31506E' : '#C9DDF3',
+    },
+    confirmCopy: {
+      flex: 1,
+      gap: 2,
+    },
+    confirmTitle: {
+      color: palette.ink900,
+      fontSize: 18,
+      fontWeight: '900',
+    },
+    confirmBody: {
+      color: palette.ink700,
+      fontSize: 12,
+      lineHeight: 18,
+    },
+    confirmScroll: {
+      maxHeight: 430,
+    },
+    confirmSections: {
+      gap: 12,
+      paddingBottom: 2,
+    },
+    confirmSection: {
+      gap: 8,
+    },
+    confirmSectionTitle: {
+      color: palette.ink500,
+      fontSize: 11,
+      fontWeight: '900',
+      textTransform: 'uppercase',
+      letterSpacing: 0.5,
+    },
+    confirmRows: {
+      borderRadius: 10,
+      borderWidth: 1,
+      borderColor: palette.line,
+      overflow: 'hidden',
+      backgroundColor: isDark ? '#0C1621' : '#F8FBFF',
+    },
+    confirmRow: {
+      flexDirection: 'row',
+      alignItems: 'flex-start',
+      justifyContent: 'space-between',
+      gap: 12,
+      paddingHorizontal: 14,
+      paddingVertical: 9,
+      borderBottomWidth: 1,
+      borderBottomColor: palette.line,
+    },
+    confirmRowLast: {
+      borderBottomWidth: 0,
+    },
+    confirmLabel: {
+      flex: 0.44,
+      color: palette.ink500,
+      fontSize: 12,
+      lineHeight: 17,
+      fontWeight: '700',
+    },
+    confirmValue: {
+      flex: 0.56,
+      color: palette.ink900,
+      fontSize: 12,
+      lineHeight: 17,
+      fontWeight: '800',
+      textAlign: 'right',
+    },
+    confirmActions: {
+      gap: 10,
     },
     contextCard: {
       gap: 12,
