@@ -187,3 +187,13 @@ export async function assignProfileRole(profileId, nextRole) {
     throw new Error(error.message || 'Failed to update role.');
   }
 }
+
+export async function deleteProfileAccount(profileId) {
+  const { error } = await supabase.rpc('delete_profile_account', {
+    target_profile_id: profileId,
+  });
+
+  if (error) {
+    throw new Error(error.message || 'Failed to delete account.');
+  }
+}

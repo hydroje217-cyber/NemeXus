@@ -639,7 +639,12 @@ function RecentReadingsPanel({ readings }) {
   );
 }
 
-export default function OverviewScreen({ dashboard, activeSection = 'production' }) {
+export default function OverviewScreen({
+  dashboard,
+  activeSection = 'production',
+  scrollRequest = 0,
+  onVisibleSectionsChange,
+}) {
   const [powerZoom, setPowerZoom] = useState(1);
   const [chemicalZoom, setChemicalZoom] = useState(1);
   const [monthlyProductionZoom, setMonthlyProductionZoom] = useState(1);
@@ -653,6 +658,12 @@ export default function OverviewScreen({ dashboard, activeSection = 'production'
   const monthlyPowerConsumption = dashboard?.monthlyPowerConsumption ?? { totalPower: 0, rows: [] };
   const monthlyChemicalUsage = dashboard?.monthlyChemicalUsage ?? { totalChlorine: 0, totalPeroxide: 0, rows: [] };
   const activeDailyRows = dailyProduction.rows.filter((row) => Number(row.production) > 0);
+  const sectionRefs = {
+    production: productionRef,
+    power: powerRef,
+    chemical: chemicalRef,
+    activity: activityRef,
+  };
   const zoomProps = (zoomLevel, setZoomLevel) => ({
     zoomLevel,
     onZoomIn: () => setZoomLevel((current) => clampZoom(current + CHART_ZOOM_STEP)),
@@ -661,18 +672,59 @@ export default function OverviewScreen({ dashboard, activeSection = 'production'
   });
 
   useEffect(() => {
-    const sectionRefs = {
-      production: productionRef,
-      power: powerRef,
-      chemical: chemicalRef,
-      activity: activityRef,
-    };
     const target = sectionRefs[activeSection]?.current;
 
     if (target) {
       target.scrollIntoView({ behavior: 'smooth', block: 'start' });
     }
-  }, [activeSection]);
+  }, [scrollRequest]);
+
+  useEffect(() => {
+    if (!onVisibleSectionsChange || typeof window === 'undefined') {
+      return undefined;
+    }
+
+    let animationFrame = 0;
+
+    function updateVisibleSections() {
+      const viewportHeight = window.innerHeight || document.documentElement.clientHeight;
+      const anchorY = Math.min(180, viewportHeight * 0.3);
+      const nextSections = [];
+
+      Object.entries(sectionRefs).forEach(([sectionKey, sectionRef]) => {
+        const element = sectionRef.current;
+
+        if (!element) {
+          return;
+        }
+
+        const rect = element.getBoundingClientRect();
+        const crossesAnchor = rect.top <= anchorY && rect.bottom >= anchorY;
+        const isNearAnchor = Math.abs(rect.top - anchorY) < 48 && rect.top < viewportHeight * 0.75;
+
+        if (crossesAnchor || isNearAnchor) {
+          nextSections.push(sectionKey);
+        }
+      });
+
+      onVisibleSectionsChange(nextSections.length ? nextSections : [activeSection]);
+    }
+
+    function scheduleVisibleSectionUpdate() {
+      window.cancelAnimationFrame(animationFrame);
+      animationFrame = window.requestAnimationFrame(updateVisibleSections);
+    }
+
+    scheduleVisibleSectionUpdate();
+    window.addEventListener('scroll', scheduleVisibleSectionUpdate, { passive: true });
+    window.addEventListener('resize', scheduleVisibleSectionUpdate);
+
+    return () => {
+      window.cancelAnimationFrame(animationFrame);
+      window.removeEventListener('scroll', scheduleVisibleSectionUpdate);
+      window.removeEventListener('resize', scheduleVisibleSectionUpdate);
+    };
+  }, [activeSection, onVisibleSectionsChange]);
 
   return (
     <>
