@@ -21,6 +21,13 @@ export default function App() {
   const [message, setMessage] = useState('');
   const [activeView, setActiveView] = useState('dashboard');
   const [workingId, setWorkingId] = useState('');
+  const [themeMode, setThemeMode] = useState(() => {
+    if (typeof window === 'undefined') {
+      return 'dark';
+    }
+
+    return window.localStorage.getItem('nemexus-theme') || 'dark';
+  });
 
   const isAdmin = profile?.role === 'admin';
   const canUseDashboard = isOfficeRole(profile?.role);
@@ -109,6 +116,15 @@ export default function App() {
     }
   }, [activeView, isAdmin]);
 
+  useEffect(() => {
+    document.documentElement.dataset.theme = themeMode;
+    window.localStorage.setItem('nemexus-theme', themeMode);
+  }, [themeMode]);
+
+  function handleThemeToggle() {
+    setThemeMode((currentMode) => (currentMode === 'dark' ? 'light' : 'dark'));
+  }
+
   async function handleSignOut() {
     await supabase.auth.signOut();
     setSession(null);
@@ -170,12 +186,14 @@ export default function App() {
       loading={loading}
       message={message}
       profile={profile}
+      themeMode={themeMode}
       workingId={workingId}
       onApprove={handleApprove}
       onNavigate={setActiveView}
       onRefresh={() => loadDashboard()}
       onRoleChange={handleRoleChange}
       onSignOut={handleSignOut}
+      onThemeToggle={handleThemeToggle}
     />
   );
 }

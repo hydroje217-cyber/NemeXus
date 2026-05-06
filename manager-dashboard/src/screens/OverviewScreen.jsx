@@ -1,5 +1,5 @@
-import { useState } from 'react';
-import { BarChart3, CalendarDays, Clock, Droplets, FlaskConical, Grid3X3, History, Hourglass, Minus, Plus, RotateCcw, Zap } from 'lucide-react';
+import { useEffect, useRef, useState } from 'react';
+import { BarChart3, CalendarDays, Clock, Droplets, FlaskConical, Grid3X3, History, Hourglass, Minus, Plus, RotateCcw, Users, Zap } from 'lucide-react';
 import {
   Bar,
   BarChart as RechartsBarChart,
@@ -15,6 +15,7 @@ import {
 const MIN_CHART_ZOOM = 0.75;
 const MAX_CHART_ZOOM = 2;
 const CHART_ZOOM_STEP = 0.25;
+const DAILY_PRODUCTION_DEFAULT_DAYS = 7;
 
 function formatNumber(value, decimals = 2) {
   const parsed = Number(value);
@@ -67,10 +68,11 @@ function ChartPanel({
   onZoomIn,
   onZoomOut,
   onReset,
+  panelRef,
   children,
 }) {
   return (
-    <section className="analytics-panel">
+    <section className="analytics-panel" ref={panelRef}>
       <header className="analytics-heading">
         <div>
           <span className="section-icon">
@@ -103,10 +105,49 @@ function ChartPanel({
 }
 
 function getChartWidth(rowCount, zoomLevel, daily = false) {
-  const baseColumnWidth = daily ? 54 : 78;
-  const baseMinimumWidth = daily ? 760 : 600;
+  const effectiveRowCount = daily ? Math.max(rowCount, DAILY_PRODUCTION_DEFAULT_DAYS) : rowCount;
+  const baseColumnWidth = daily ? 86 : 78;
+  const baseMinimumWidth = 600;
+  const scaledWidth = Math.round(effectiveRowCount * baseColumnWidth * zoomLevel);
 
-  return Math.max(baseMinimumWidth, Math.round(rowCount * baseColumnWidth * zoomLevel));
+  if (daily) {
+    return Math.max(360, scaledWidth);
+  }
+
+  return Math.max(baseMinimumWidth, scaledWidth);
+}
+
+function formatDailyLabel(date) {
+  return `${String(date.getMonth() + 1).padStart(2, '0')}/${String(date.getDate()).padStart(2, '0')}`;
+}
+
+function padDailyRows(rows, valueKey) {
+  const paddedRows = [...(rows ?? [])];
+
+  if (paddedRows.length >= DAILY_PRODUCTION_DEFAULT_DAYS) {
+    return paddedRows;
+  }
+
+  const oldestRow = paddedRows[paddedRows.length - 1];
+  const fallbackDate = new Date().toISOString().slice(0, 10);
+  const oldestDate = new Date(`${oldestRow?.date || oldestRow?.key || fallbackDate}T00:00:00`);
+
+  if (Number.isNaN(oldestDate.getTime())) {
+    return paddedRows;
+  }
+
+  while (paddedRows.length < DAILY_PRODUCTION_DEFAULT_DAYS) {
+    oldestDate.setDate(oldestDate.getDate() - 1);
+    const dateKey = oldestDate.toISOString().slice(0, 10);
+    paddedRows.push({
+      key: dateKey,
+      date: dateKey,
+      label: formatDailyLabel(oldestDate),
+      [valueKey]: 0,
+    });
+  }
+
+  return paddedRows;
 }
 
 function formatAxisNumber(value) {
@@ -164,7 +205,7 @@ function StackSegmentLabel({ x, y, width, height, value, fill }) {
 }
 
 function SimpleBarChart({ rows, valueKey, emptyMessage, zoomLevel, daily = false }) {
-  const visibleRows = rows ?? [];
+  const visibleRows = daily ? padDailyRows(rows, valueKey) : (rows ?? []);
   const chartRows = visibleRows.map((row) => ({
     label: row.label,
     value: Number(row[valueKey]) || 0,
@@ -177,7 +218,7 @@ function SimpleBarChart({ rows, valueKey, emptyMessage, zoomLevel, daily = false
     <>
       <div className="chart-frame" role="img" aria-label={emptyMessage}>
         <div className="chart-scroll">
-          <div className="chart-canvas" style={{ width: chartWidth, height: chartHeight }}>
+          <div className={daily ? 'chart-canvas daily-chart-canvas' : 'chart-canvas'} style={{ width: chartWidth, height: chartHeight }}>
             <ResponsiveContainer width="100%" height="100%">
               <RechartsBarChart data={chartRows} margin={{ top: 26, right: 18, left: 12, bottom: 10 }}>
                 <CartesianGrid stroke="#d9e4e8" strokeDasharray="6 10" vertical={false} />
@@ -190,7 +231,7 @@ function SimpleBarChart({ rows, valueKey, emptyMessage, zoomLevel, daily = false
                   width={64}
                 />
                 <Tooltip content={<TooltipContent />} cursor={{ fill: 'rgba(17, 106, 117, 0.08)' }} />
-                <Bar dataKey="value" name="Production" fill="#1398aa" radius={[7, 7, 0, 0]} barSize={daily ? 22 : 36}>
+                <Bar dataKey="value" name="Production" fill="#1398aa" radius={[7, 7, 0, 0]} barSize={36}>
                   <LabelList dataKey="value" content={<ChartValueLabel />} />
                 </Bar>
               </RechartsBarChart>
@@ -360,6 +401,118 @@ function StackedChemicalChart({ rows, zoomLevel }) {
   );
 }
 
+function formatShortDate(value) {
+  if (!value) {
+    return '-';
+  }
+
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) {
+    return String(value);
+  }
+
+  return parsed.toLocaleDateString('en-US', {
+    month: 'short',
+    day: '2-digit',
+    year: 'numeric',
+  });
+}
+
+function getOperatorStatus(operator) {
+  if (!operator.is_active) {
+    return 'Inactive';
+  }
+
+  return operator.is_approved ? 'Approved' : 'Pending';
+}
+
+function getCurrentShift(date = new Date()) {
+  const hour = date.getHours();
+
+  if (hour >= 7 && hour < 15) {
+    return 'SHIFT 1 (7AM - 3PM)';
+  }
+
+  if (hour >= 15 && hour < 23) {
+    return 'SHIFT 2 (3PM - 11PM)';
+  }
+
+  return 'SHIFT 3 (11PM - 7AM)';
+}
+
+function OperatorsPanel({ operators, panelRef }) {
+  const [currentShift, setCurrentShift] = useState(() => getCurrentShift());
+  const operatorRows = (operators ?? [])
+    .filter((operator) => operator.role === 'operator')
+    .sort((first, second) => {
+      const firstName = first.full_name || first.email || '';
+      const secondName = second.full_name || second.email || '';
+      return firstName.localeCompare(secondName);
+    });
+
+  useEffect(() => {
+    const timer = window.setInterval(() => {
+      setCurrentShift(getCurrentShift());
+    }, 60 * 1000);
+
+    return () => window.clearInterval(timer);
+  }, []);
+
+  return (
+    <section className="operator-list-panel" ref={panelRef}>
+      <header className="recent-readings-heading operator-heading">
+        <div>
+          <span className="section-icon">
+            <Users size={16} />
+          </span>
+          <div>
+            <h3>Operators</h3>
+            <p>{operatorRows.length} operator account(s)</p>
+          </div>
+        </div>
+        <strong className="operator-shift-badge">{currentShift}</strong>
+      </header>
+
+      {!operatorRows.length ? (
+        <p className="chart-empty">No operator accounts found.</p>
+      ) : (
+        <div className="operator-card-scroll">
+          <div className="operator-card-grid">
+            {operatorRows.map((operator) => {
+              const status = getOperatorStatus(operator);
+              return (
+                <article className="operator-card" key={operator.id}>
+                  <div className="recent-reading-topline">
+                    <div>
+                      <h4>{operator.full_name || operator.email || 'Operator'}</h4>
+                      <span>Operator</span>
+                    </div>
+                  </div>
+
+                  <div className="recent-reading-meta">
+                    <div>
+                      <span>Email</span>
+                      <strong>{operator.email || '-'}</strong>
+                    </div>
+                    <div>
+                      <span>Created</span>
+                      <strong>{formatShortDate(operator.created_at)}</strong>
+                    </div>
+                  </div>
+
+                  <p>Role: {operator.role || 'operator'}</p>
+                  <p>Status: {status}</p>
+                  <p>Approved: {operator.approved_at ? formatDateTime(operator.approved_at) : 'Not approved yet'}</p>
+                </article>
+              );
+            })}
+          </div>
+        </div>
+      )}
+    </section>
+  );
+}
+
 function RecentReadingCard({ reading }) {
   const isDeepwell = reading.site_type === 'DEEPWELL';
   const submittedBy = reading.submitted_profile?.full_name || reading.submitted_profile?.email || '-';
@@ -486,11 +639,15 @@ function RecentReadingsPanel({ readings }) {
   );
 }
 
-export default function OverviewScreen({ dashboard }) {
+export default function OverviewScreen({ dashboard, activeSection = 'production' }) {
   const [powerZoom, setPowerZoom] = useState(1);
   const [chemicalZoom, setChemicalZoom] = useState(1);
   const [monthlyProductionZoom, setMonthlyProductionZoom] = useState(1);
   const [dailyProductionZoom, setDailyProductionZoom] = useState(1);
+  const productionRef = useRef(null);
+  const powerRef = useRef(null);
+  const chemicalRef = useRef(null);
+  const activityRef = useRef(null);
   const monthlyProduction = dashboard?.monthlyProduction ?? { totalProduction: 0, averageProduction: 0, rows: [] };
   const dailyProduction = dashboard?.dailyProduction ?? { monthLabel: '', totalProduction: 0, rows: [] };
   const monthlyPowerConsumption = dashboard?.monthlyPowerConsumption ?? { totalPower: 0, rows: [] };
@@ -503,6 +660,20 @@ export default function OverviewScreen({ dashboard }) {
     onReset: () => setZoomLevel(1),
   });
 
+  useEffect(() => {
+    const sectionRefs = {
+      production: productionRef,
+      power: powerRef,
+      chemical: chemicalRef,
+      activity: activityRef,
+    };
+    const target = sectionRefs[activeSection]?.current;
+
+    if (target) {
+      target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
+  }, [activeSection]);
+
   return (
     <>
       <section className="chart-grid">
@@ -512,6 +683,7 @@ export default function OverviewScreen({ dashboard }) {
           summaryLabel="Total Production"
           summaryValue={formatNumber(monthlyProduction.totalProduction)}
           summaryHint="Latest 10 months"
+          panelRef={productionRef}
           {...zoomProps(monthlyProductionZoom, setMonthlyProductionZoom)}
         >
           <SimpleBarChart
@@ -545,6 +717,7 @@ export default function OverviewScreen({ dashboard }) {
           summaryLabel="Total Power"
           summaryValue={formatNumber(monthlyPowerConsumption.totalPower)}
           summaryHint="Latest 10 months"
+          panelRef={powerRef}
           {...zoomProps(powerZoom, setPowerZoom)}
         >
           <StackedPowerChart rows={monthlyPowerConsumption.rows} zoomLevel={powerZoom} />
@@ -553,6 +726,7 @@ export default function OverviewScreen({ dashboard }) {
         <ChartPanel
           title="Monthly Chemical Usage"
           icon={FlaskConical}
+          panelRef={chemicalRef}
           summaryItems={[
             {
               label: 'Total Chlorine',
@@ -571,6 +745,7 @@ export default function OverviewScreen({ dashboard }) {
         >
           <StackedChemicalChart rows={monthlyChemicalUsage.rows} zoomLevel={chemicalZoom} />
         </ChartPanel>
+        <OperatorsPanel operators={dashboard?.operators ?? []} panelRef={activityRef} />
         <RecentReadingsPanel readings={dashboard?.recentReadings ?? []} />
       </section>
     </>

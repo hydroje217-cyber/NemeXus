@@ -1,7 +1,9 @@
 function BrandLockup({ title, subtitle }) {
   return (
     <div className="brand-lockup">
-      <span className="brand-mark">NX</span>
+      <span className="brand-mark">
+        <img src="/nemexus-logo.png" alt="NemeXus logo" />
+      </span>
       <div>
         <h1>{title}</h1>
         <p>{subtitle}</p>
