@@ -1,5 +1,6 @@
 import { forwardRef, useContext, useImperativeHandle, useMemo, useRef, useState } from 'react';
 import { Animated, StyleSheet, Text, TextInput, View } from 'react-native';
+import Ionicons from '@expo/vector-icons/Ionicons';
 import { KeyboardScrollContext } from './ScreenShell';
 import { useTheme } from '../context/ThemeContext';
 
@@ -20,6 +21,9 @@ const FormField = forwardRef(function FormField({
   submitBehavior,
   onFocus,
   onBlur,
+  showLockedIndicator = true,
+  error = false,
+  errorText = '',
 }, ref) {
   const { palette, isDark } = useTheme();
   const styles = useMemo(() => createStyles(palette, isDark), [palette, isDark]);
@@ -77,13 +81,28 @@ const FormField = forwardRef(function FormField({
 
   return (
     <View style={styles.wrapper}>
-      <Text style={[styles.label, focused ? styles.labelFocused : null]}>{label}</Text>
+      <View style={styles.labelRow}>
+        {!editable && showLockedIndicator ? (
+          <Ionicons name="lock-closed-outline" size={15} color={palette.ink500} />
+        ) : null}
+        <Text
+          style={[
+            styles.label,
+            focused ? styles.labelFocused : null,
+            !editable ? styles.labelDisabled : null,
+            error ? styles.labelError : null,
+          ]}
+        >
+          {label}
+        </Text>
+      </View>
       <Animated.View
         style={[
           styles.inputWrap,
           animatedWrapStyle,
           focused ? styles.inputWrapFocused : null,
           !editable ? styles.inputWrapDisabled : null,
+          error ? styles.inputWrapError : null,
         ]}
       >
         <View style={styles.inputRow}>
@@ -114,6 +133,7 @@ const FormField = forwardRef(function FormField({
           />
         </View>
       </Animated.View>
+      {errorText ? <Text style={styles.errorText}>{errorText}</Text> : null}
     </View>
   );
 });
@@ -132,8 +152,19 @@ function createStyles(palette, isDark) {
       textTransform: 'uppercase',
       letterSpacing: 0.5,
     },
+    labelRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 8,
+    },
     labelFocused: {
       color: palette.teal600,
+    },
+    labelDisabled: {
+      color: palette.ink500,
+    },
+    labelError: {
+      color: palette.errorText,
     },
     inputWrap: {
       borderRadius: 16,
@@ -155,8 +186,16 @@ function createStyles(palette, isDark) {
       elevation: 3,
     },
     inputWrapDisabled: {
-      borderColor: palette.line,
-      backgroundColor: isDark ? '#111D29' : '#EAF0F6',
+      borderColor: isDark ? '#596879' : '#B8C5D3',
+      borderStyle: 'dashed',
+      borderWidth: 1.5,
+      backgroundColor: isDark ? '#111820' : '#E5EBF2',
+    },
+    inputWrapError: {
+      borderColor: palette.errorText,
+      borderStyle: 'solid',
+      borderWidth: 1.5,
+      backgroundColor: palette.errorBg,
     },
     inputRow: {
       flexDirection: 'row',
@@ -187,8 +226,14 @@ function createStyles(palette, isDark) {
       textAlignVertical: 'top',
     },
     disabled: {
-      backgroundColor: isDark ? '#111D29' : '#EAF0F6',
+      backgroundColor: isDark ? '#111820' : '#E5EBF2',
       color: palette.ink500,
+    },
+    errorText: {
+      color: palette.errorText,
+      fontSize: 12,
+      fontWeight: '700',
+      lineHeight: 16,
     },
   });
 }
