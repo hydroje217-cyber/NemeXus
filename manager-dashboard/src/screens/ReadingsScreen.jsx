@@ -1,8 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { CalendarDays, ChevronDown, ChevronUp, FileText, Filter, Grid2X2, List, RefreshCw, Table2 } from 'lucide-react';
-import JSZip from 'jszip';
-import { jsPDF } from 'jspdf';
-import autoTable from 'jspdf-autotable';
+import { CalendarDays, ChevronDown, ChevronUp, Eye, FileText, Filter, Grid2X2, List, RefreshCw, Search, Table2, X } from 'lucide-react';
 import { listReadings } from '../services/readings';
 import { aggregateDailyRows } from '../utils/production';
 
@@ -106,6 +103,66 @@ function sortRowsByDateDesc(rows) {
   return [...rows].sort((a, b) => String(b.date || '').localeCompare(String(a.date || '')));
 }
 
+function getReadingSearchText(row) {
+  return [
+    row.sites?.name,
+    row.status,
+    row.remarks,
+    row.submitted_profile?.full_name,
+    row.submitted_profile?.email,
+    row.slot_datetime,
+    row.reading_datetime,
+  ]
+    .filter(Boolean)
+    .join(' ')
+    .toLowerCase();
+}
+
+function getReadingDetailFields(row) {
+  if (!row) {
+    return [];
+  }
+
+  const sharedFields = [
+    ['Site', row.sites?.name || '-'],
+    ['Status', row.status || '-'],
+    ['Slot', formatShortDateTime(row.slot_datetime)],
+    ['Recorded at', formatShortDateTime(row.reading_datetime)],
+    ['Recorded by', row.submitted_profile?.full_name || row.submitted_profile?.email || '-'],
+    ['Remarks', row.remarks || '-'],
+  ];
+
+  const typeFields =
+    row.site_type === CHLORINATION
+      ? [
+          ['Pressure', row.pressure_psi ?? '-'],
+          ['Residual chlorine', row.rc_ppm ?? '-'],
+          ['Turbidity', row.turbidity_ntu ?? '-'],
+          ['pH', row.ph ?? '-'],
+          ['TDS', row.tds_ppm ?? '-'],
+          ['Tank level', row.tank_level_liters ?? '-'],
+          ['Flowrate', row.flowrate_m3hr ?? '-'],
+          ['Totalizer', row.totalizer ?? '-'],
+          ['Power kWh', row.chlorination_power_kwh ?? '-'],
+          ['Chlorine used', row.chlorine_consumed ?? '-'],
+          ['Peroxide', row.peroxide_consumption ?? '-'],
+        ]
+      : [
+          ['Upstream pressure', row.upstream_pressure_psi ?? '-'],
+          ['Downstream pressure', row.downstream_pressure_psi ?? '-'],
+          ['Flowrate', row.flowrate_m3hr ?? '-'],
+          ['Frequency', row.vfd_frequency_hz ?? '-'],
+          ['Voltage L1', row.voltage_l1_v ?? '-'],
+          ['Voltage L2', row.voltage_l2_v ?? '-'],
+          ['Voltage L3', row.voltage_l3_v ?? '-'],
+          ['Amperage', row.amperage_a ?? '-'],
+          ['TDS', row.tds_ppm ?? '-'],
+          ['Power kWh', row.power_kwh_shift ?? '-'],
+        ];
+
+  return [...sharedFields, ...typeFields];
+}
+
 function escapeXml(value) {
   return String(value ?? '')
     .replace(/&/g, '&amp;')
@@ -149,6 +206,7 @@ function buildWorksheetXml(rows) {
 }
 
 async function buildXlsxBlob(sheets) {
+  const { default: JSZip } = await import('jszip');
   const zip = new JSZip();
 
   zip.file(
@@ -242,6 +300,12 @@ export default function ReadingsScreen({ selectedTableMode = CHLORINATION }) {
   const [fromDate, setFromDate] = useState('');
   const [toDate, setToDate] = useState('');
   const [limit, setLimit] = useState('50');
+  const [siteFilter, setSiteFilter] = useState('all');
+  const [statusFilter, setStatusFilter] = useState('all');
+  const [searchTerm, setSearchTerm] = useState('');
+  const [pageSize, setPageSize] = useState('25');
+  const [currentPage, setCurrentPage] = useState(1);
+  const [selectedReading, setSelectedReading] = useState(null);
   const [items, setItems] = useState([]);
   const [dailyAverageRows, setDailyAverageRows] = useState([]);
   const [loading, setLoading] = useState(false);
@@ -331,6 +395,52 @@ export default function ReadingsScreen({ selectedTableMode = CHLORINATION }) {
 
   const activeColumns = tableMode === CHLORINATION ? chlorinationColumns : deepwellColumns;
   const averageFields = tableMode === CHLORINATION ? chlorinationAverageFields : deepwellAverageFields;
+  const siteOptions = useMemo(() => {
+    const siteMap = new Map();
+
+    items.forEach((item) => {
+      const siteId = item.site_id || item.sites?.id;
+      const siteName = item.sites?.name;
+
+      if (siteId && siteName) {
+        siteMap.set(siteId, siteName);
+      }
+    });
+
+    return Array.from(siteMap.entries())
+      .map(([id, name]) => ({ id, name }))
+      .sort((first, second) => first.name.localeCompare(second.name));
+  }, [items]);
+  const filteredItems = useMemo(() => {
+    const normalizedSearch = searchTerm.trim().toLowerCase();
+
+    return items.filter((item) => {
+      const siteId = item.site_id || item.sites?.id || '';
+      const status = item.status || '';
+
+      if (siteFilter !== 'all' && siteId !== siteFilter) {
+        return false;
+      }
+
+      if (statusFilter !== 'all' && status !== statusFilter) {
+        return false;
+      }
+
+      if (normalizedSearch && !getReadingSearchText(item).includes(normalizedSearch)) {
+        return false;
+      }
+
+      return true;
+    });
+  }, [items, searchTerm, siteFilter, statusFilter]);
+  const pageSizeNumber = Math.min(100, Math.max(5, Number(pageSize) || 25));
+  const totalPages = Math.max(1, Math.ceil(filteredItems.length / pageSizeNumber));
+  const currentSafePage = Math.min(currentPage, totalPages);
+  const visibleItems = filteredItems.slice((currentSafePage - 1) * pageSizeNumber, currentSafePage * pageSizeNumber);
+  const statusOptions = useMemo(
+    () => Array.from(new Set(items.map((item) => item.status).filter(Boolean))).sort(),
+    [items]
+  );
   const visibleDailyAverageRows = useMemo(() => sortRowsByDateDesc(dailyAverageRows), [dailyAverageRows]);
   const dailyAverageColumns = useMemo(
     () => [
@@ -388,6 +498,7 @@ export default function ReadingsScreen({ selectedTableMode = CHLORINATION }) {
 
       setItems(nextItems);
       setDailyAverageRows(averageRows);
+      setCurrentPage(1);
       setMessage(
         `Showing ${nextItems.length} ${effectiveTableMode.toLowerCase()} record(s) and ${averageRows.length} daily average row(s).`
       );
@@ -410,16 +521,30 @@ export default function ReadingsScreen({ selectedTableMode = CHLORINATION }) {
     loadHistory();
   }, [tableMode]);
 
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [searchTerm, siteFilter, statusFilter, pageSize, visibleTable]);
+
   async function handleReset() {
     setFromDate('');
     setToDate('');
     setLimit('8');
+    setSiteFilter('all');
+    setStatusFilter('all');
+    setSearchTerm('');
+    setPageSize('25');
+    setSelectedReading(null);
     await loadHistory({ fromDate: '', toDate: '', limit: '8' });
   }
 
   async function handleExport(nextFormat = exportFormat) {
     if (!items.length && !dailyAverageRows.length) {
       setMessage(`Load some readings first before exporting to ${nextFormat.toUpperCase()}.`);
+      return;
+    }
+
+    if (!filteredItems.length && visibleTable === 'records') {
+      setMessage(`No records match the current filters for ${nextFormat.toUpperCase()} export.`);
       return;
     }
 
@@ -432,10 +557,14 @@ export default function ReadingsScreen({ selectedTableMode = CHLORINATION }) {
       if (nextFormat === 'xlsx') {
         const blob = await buildXlsxBlob([
           { name: 'Daily Averages', rows: buildTableRows(dailyAverageColumns, visibleDailyAverageRows) },
-          { name: 'Detailed Readings', rows: buildTableRows(activeColumns, items) },
+          { name: 'Detailed Readings', rows: buildTableRows(activeColumns, filteredItems) },
         ]);
         downloadBlob(blob, `${fileBase}.xlsx`, 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
       } else if (nextFormat === 'pdf') {
+        const [{ jsPDF }, { default: autoTable }] = await Promise.all([
+          import('jspdf'),
+          import('jspdf-autotable'),
+        ]);
         const doc = new jsPDF({ orientation: 'landscape' });
         doc.text('NemeXus Reading History', 14, 14);
         autoTable(doc, {
@@ -447,7 +576,7 @@ export default function ReadingsScreen({ selectedTableMode = CHLORINATION }) {
         });
         autoTable(doc, {
           head: [activeColumns.map((column) => column.label)],
-          body: items.map((row) => activeColumns.map((column) => column.render(row))),
+          body: filteredItems.map((row) => activeColumns.map((column) => column.render(row))),
           startY: doc.lastAutoTable.finalY + 12,
           styles: { fontSize: 6 },
           headStyles: { fillColor: [17, 35, 59] },
@@ -456,7 +585,7 @@ export default function ReadingsScreen({ selectedTableMode = CHLORINATION }) {
       } else {
         const sections = [
           buildCsvSection('Daily Average Table', dailyAverageColumns, visibleDailyAverageRows),
-          buildCsvSection('Detailed Readings', activeColumns, items),
+          buildCsvSection('Detailed Readings', activeColumns, filteredItems),
         ];
         downloadBlob(`\uFEFF${sections.join('\n\n')}`, `${fileBase}.csv`, 'text/csv;charset=utf-8;');
       }
@@ -528,6 +657,49 @@ export default function ReadingsScreen({ selectedTableMode = CHLORINATION }) {
             </div>
           </label>
 
+          <label className="readings-field">
+            <span>Site</span>
+            <select value={siteFilter} onChange={(event) => setSiteFilter(event.target.value)}>
+              <option value="all">All sites</option>
+              {siteOptions.map((site) => (
+                <option value={site.id} key={site.id}>{site.name}</option>
+              ))}
+            </select>
+          </label>
+
+          <label className="readings-field">
+            <span>Status</span>
+            <select value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)}>
+              <option value="all">All statuses</option>
+              {statusOptions.map((status) => (
+                <option value={status} key={status}>{status}</option>
+              ))}
+            </select>
+          </label>
+
+          <label className="readings-field full">
+            <span>Search</span>
+            <div className="input-with-icon">
+              <Search size={17} />
+              <input
+                type="search"
+                value={searchTerm}
+                placeholder="Site, operator, status, remarks"
+                onChange={(event) => setSearchTerm(event.target.value)}
+              />
+            </div>
+          </label>
+
+          <label className="readings-field">
+            <span>Rows/page</span>
+            <select value={pageSize} onChange={(event) => setPageSize(event.target.value)}>
+              <option value="10">10</option>
+              <option value="25">25</option>
+              <option value="50">50</option>
+              <option value="100">100</option>
+            </select>
+          </label>
+
           <div className="readings-actions full">
             <button type="button" className="load-button" disabled={loading} onClick={() => loadHistory()}>
               <RefreshCw size={17} className={loading ? 'spin' : ''} />
@@ -587,21 +759,32 @@ export default function ReadingsScreen({ selectedTableMode = CHLORINATION }) {
         <section className="panel">
           <div className="panel-heading">
             <h3>{tableMode === CHLORINATION ? 'Chlorination records' : 'Deepwell records'}</h3>
-            <span>{items.length} record(s)</span>
+            <span>{filteredItems.length} of {items.length} record(s)</span>
           </div>
           <div className="table-wrap readings-table-wrap">
             <table>
               <thead>
                 <tr>
+                  <th>Details</th>
                   {activeColumns.map((column) => (
                     <th key={column.key}>{column.label}</th>
                   ))}
                 </tr>
               </thead>
               <tbody>
-                {items.length ? (
-                  items.map((row) => (
+                {visibleItems.length ? (
+                  visibleItems.map((row) => (
                     <tr key={`${row.site_type}-${row.id}`}>
+                      <td>
+                        <button
+                          type="button"
+                          className="table-icon-button"
+                          aria-label="View reading details"
+                          onClick={() => setSelectedReading(row)}
+                        >
+                          <Eye size={16} />
+                        </button>
+                      </td>
                       {activeColumns.map((column) => (
                         <td key={column.key}>{column.render(row)}</td>
                       ))}
@@ -609,14 +792,47 @@ export default function ReadingsScreen({ selectedTableMode = CHLORINATION }) {
                   ))
                 ) : (
                   <tr>
-                    <td colSpan={activeColumns.length}>No readings found.</td>
+                    <td colSpan={activeColumns.length + 1}>No readings found.</td>
                   </tr>
                 )}
               </tbody>
             </table>
           </div>
+          <div className="readings-pagination">
+            <span>Page {currentSafePage} of {totalPages}</span>
+            <div>
+              <button type="button" disabled={currentSafePage <= 1} onClick={() => setCurrentPage((page) => Math.max(1, page - 1))}>
+                Previous
+              </button>
+              <button type="button" disabled={currentSafePage >= totalPages} onClick={() => setCurrentPage((page) => Math.min(totalPages, page + 1))}>
+                Next
+              </button>
+            </div>
+          </div>
         </section>
       )}
+
+      {selectedReading ? (
+        <div className="modal-backdrop" role="presentation" onClick={() => setSelectedReading(null)}>
+          <section className="reading-detail-dialog" role="dialog" aria-modal="true" aria-label="Reading details" onClick={(event) => event.stopPropagation()}>
+            <button type="button" className="dialog-close-button" aria-label="Close details" onClick={() => setSelectedReading(null)}>
+              <X size={18} />
+            </button>
+            <div>
+              <p className="eyebrow">{selectedReading.site_type === CHLORINATION ? 'Chlorination' : 'Deepwell'}</p>
+              <h3>{selectedReading.sites?.name || 'Reading details'}</h3>
+            </div>
+            <div className="reading-detail-grid">
+              {getReadingDetailFields(selectedReading).map(([label, value]) => (
+                <div key={label}>
+                  <span>{label}</span>
+                  <strong>{value}</strong>
+                </div>
+              ))}
+            </div>
+          </section>
+        </div>
+      ) : null}
     </div>
   );
 }

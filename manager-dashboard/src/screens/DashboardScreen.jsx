@@ -25,6 +25,22 @@ function titleize(value) {
   return value ? value[0].toUpperCase() + value.slice(1) : 'Dashboard';
 }
 
+function formatLastUpdated(value) {
+  if (!value) {
+    return 'Waiting for data';
+  }
+
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) {
+    return 'Recently updated';
+  }
+
+  return `Updated ${parsed.toLocaleTimeString('en-US', {
+    hour: '2-digit',
+    minute: '2-digit',
+  })}`;
+}
+
 function getTabs(isAdmin) {
   const tabs = [
     { key: 'dashboard', label: 'Dashboard', icon: BarChart3 },
@@ -50,6 +66,7 @@ export default function DashboardScreen({
   activeView,
   dashboard,
   isAdmin,
+  lastUpdatedAt,
   loading,
   message,
   profile,
@@ -133,9 +150,15 @@ export default function DashboardScreen({
     return (
       <OverviewScreen
         dashboard={dashboard}
+        isAdmin={isAdmin}
         activeSection={dashboardSection}
         scrollRequest={dashboardScrollRequest}
         onVisibleSectionsChange={setVisibleDashboardSections}
+        onOpenApprovals={() => {
+          onNavigate('approvals');
+          setOpenSubnav('');
+          setIsMobileNavOpen(false);
+        }}
       />
     );
   }
@@ -309,10 +332,16 @@ export default function DashboardScreen({
             <p className="eyebrow">Live Supabase workspace</p>
             <h2>{titleize(activeView)}</h2>
           </div>
-          <button type="button" onClick={onRefresh} disabled={loading}>
-            {loading ? <Loader2 className="spin" size={16} /> : <RefreshCw size={16} />}
-            Refresh
-          </button>
+          <div className="topbar-actions">
+            <span className="freshness-pill">
+              <span aria-hidden="true" />
+              {formatLastUpdated(lastUpdatedAt)}
+            </span>
+            <button type="button" onClick={onRefresh} disabled={loading}>
+              {loading ? <Loader2 className="spin" size={16} /> : <RefreshCw size={16} />}
+              Refresh
+            </button>
+          </div>
         </header>
 
         {message ? <div className="notice">{message}</div> : null}

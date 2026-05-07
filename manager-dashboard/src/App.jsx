@@ -22,6 +22,7 @@ export default function App() {
   const [message, setMessage] = useState('');
   const [activeView, setActiveView] = useState('dashboard');
   const [workingId, setWorkingId] = useState('');
+  const [lastUpdatedAt, setLastUpdatedAt] = useState(null);
   const [themeMode, setThemeMode] = useState(() => {
     if (typeof window === 'undefined') {
       return 'dark';
@@ -41,6 +42,7 @@ export default function App() {
     try {
       const nextDashboard = await getDashboardSnapshot();
       setDashboard(nextDashboard);
+      setLastUpdatedAt(new Date().toISOString());
       setMessage('');
     } catch (error) {
       setMessage(error.message || 'Failed to load dashboard.');
@@ -53,6 +55,7 @@ export default function App() {
     if (!nextSession?.user) {
       setProfile(null);
       setDashboard(null);
+      setLastUpdatedAt(null);
       setLoading(false);
       return;
     }
@@ -65,6 +68,7 @@ export default function App() {
         await loadDashboard({ silent: true });
       } else {
         setDashboard(null);
+        setLastUpdatedAt(null);
       }
     } catch (error) {
       setMessage(error.message || 'Failed to load profile.');
@@ -118,6 +122,33 @@ export default function App() {
   }, [activeView, isAdmin]);
 
   useEffect(() => {
+    if (!supabaseReady || !supabase || !canUseDashboard) {
+      return undefined;
+    }
+
+    let refreshTimer = 0;
+    const scheduleRefresh = () => {
+      window.clearTimeout(refreshTimer);
+      refreshTimer = window.setTimeout(() => {
+        loadDashboard({ silent: true });
+      }, 800);
+    };
+
+    const channel = supabase
+      .channel('manager-dashboard-freshness')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'chlorination_readings' }, scheduleRefresh)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'deepwell_readings' }, scheduleRefresh)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'profiles' }, scheduleRefresh)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'sites' }, scheduleRefresh)
+      .subscribe();
+
+    return () => {
+      window.clearTimeout(refreshTimer);
+      supabase.removeChannel(channel);
+    };
+  }, [canUseDashboard]);
+
+  useEffect(() => {
     document.documentElement.dataset.theme = themeMode;
     window.localStorage.setItem('nemexus-theme', themeMode);
   }, [themeMode]);
@@ -131,6 +162,7 @@ export default function App() {
     setSession(null);
     setProfile(null);
     setDashboard(null);
+    setLastUpdatedAt(null);
   }
 
   async function handleApprove(account) {
@@ -202,6 +234,7 @@ export default function App() {
       loading={loading}
       message={message}
       profile={profile}
+      lastUpdatedAt={lastUpdatedAt}
       themeMode={themeMode}
       workingId={workingId}
       onApprove={handleApprove}

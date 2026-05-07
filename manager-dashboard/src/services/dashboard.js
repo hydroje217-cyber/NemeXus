@@ -87,14 +87,14 @@ export async function getDashboardSnapshot({ limit = 50 } = {}) {
     supabase
       .from('chlorination_readings')
       .select(
-        'id, status, created_at, reading_datetime, totalizer, rc_ppm, ph, site:sites(name, type), submitted_profile:profiles!chlorination_readings_submitted_by_fkey(full_name, email)'
+        'id, status, created_at, reading_datetime, slot_datetime, pressure_psi, rc_ppm, turbidity_ntu, ph, tds_ppm, totalizer, chlorination_power_kwh, site:sites(name, type), submitted_profile:profiles!chlorination_readings_submitted_by_fkey(full_name, email)'
       )
       .order('created_at', { ascending: false })
       .limit(limit),
     supabase
       .from('deepwell_readings')
       .select(
-        'id, status, created_at, reading_datetime, flowrate_m3hr, tds_ppm, power_kwh_shift, site:sites(name, type), submitted_profile:profiles!deepwell_readings_submitted_by_fkey(full_name, email)'
+        'id, status, created_at, reading_datetime, slot_datetime, upstream_pressure_psi, downstream_pressure_psi, flowrate_m3hr, tds_ppm, power_kwh_shift, voltage_l1_v, voltage_l2_v, voltage_l3_v, amperage_a, site:sites(name, type), submitted_profile:profiles!deepwell_readings_submitted_by_fkey(full_name, email)'
       )
       .order('created_at', { ascending: false })
       .limit(limit),
