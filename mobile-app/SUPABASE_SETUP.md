@@ -52,6 +52,15 @@ Before testing registration, disable email confirmation in Supabase so office ap
 
 With `Confirm email` disabled, Supabase lets the user create a session immediately after signup, and your app will block access using the office approval check in `profiles.is_approved`.
 
+For forgot-password links, add the app redirect URL in Supabase:
+
+- open `Authentication`
+- open `URL Configuration`
+- add `nemexus://reset-password` to `Redirect URLs`
+- when testing with Expo Go, also add the reset URL printed by the running app environment, for example `exp://YOUR-LAN-IP:8081/--/reset-password`
+
+The app sends reset emails using Expo's generated reset URL, so development builds, Expo Go, and production builds can each use the correct link format.
+
 After a user signs up:
 
 - operators stay blocked from the app until approved

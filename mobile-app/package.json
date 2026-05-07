@@ -8,7 +8,8 @@
     "android": "expo run:android",
     "ios": "expo run:ios",
     "web": "expo start --web",
-    "test:production": "node tests/production.test.mjs"
+    "test:production": "node tests/production.test.mjs",
+    "test:auth-recovery": "node tests/authRecovery.test.mjs"
   },
   "dependencies": {
     "@expo/vector-icons": "^15.0.3",
