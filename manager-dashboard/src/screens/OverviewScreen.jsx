@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { BarChart3, CalendarDays, Clock, Droplets, FlaskConical, Grid3X3, History, Hourglass, Minus, Plus, RotateCcw, Users, Zap } from 'lucide-react';
+import { AlertTriangle, ArrowRight, BarChart3, Bell, Building2, CalendarDays, CheckCircle2, Clock, Droplets, FlaskConical, Grid3X3, History, Hourglass, Minus, Plus, RotateCcw, ShieldCheck, Users, X, Zap } from 'lucide-react';
 import {
   Bar,
   BarChart as RechartsBarChart,
@@ -440,6 +440,230 @@ function getCurrentShift(date = new Date()) {
   return 'SHIFT 3 (11PM - 7AM)';
 }
 
+function getCurrentShiftWindow(date = new Date()) {
+  const start = new Date(date);
+  const end = new Date(date);
+  const hour = date.getHours();
+
+  if (hour >= 7 && hour < 15) {
+    start.setHours(7, 0, 0, 0);
+    end.setHours(15, 0, 0, 0);
+  } else if (hour >= 15 && hour < 23) {
+    start.setHours(15, 0, 0, 0);
+    end.setHours(23, 0, 0, 0);
+  } else if (hour >= 23) {
+    start.setHours(23, 0, 0, 0);
+    end.setDate(end.getDate() + 1);
+    end.setHours(7, 0, 0, 0);
+  } else {
+    start.setDate(start.getDate() - 1);
+    start.setHours(23, 0, 0, 0);
+    end.setHours(7, 0, 0, 0);
+  }
+
+  return { start: start.getTime(), end: end.getTime() };
+}
+
+function getSiteName(reading) {
+  return reading?.site?.name || reading?.sites?.name || (reading?.site_type === 'DEEPWELL' ? 'Deepwell site' : 'Chlorination site');
+}
+
+function addRangeAlert(alerts, reading, field, label, min, max, unit = '') {
+  const value = Number(reading?.[field]);
+
+  if (!Number.isFinite(value) || (value >= min && value <= max)) {
+    return;
+  }
+
+  alerts.push({
+    key: `${reading.site_type}-${reading.id}-${field}`,
+    severity: value < min ? 'warning' : 'critical',
+    title: `${label} outside target`,
+    detail: `${getSiteName(reading)} reported ${value}${unit ? ` ${unit}` : ''}; target is ${min}-${max}${unit ? ` ${unit}` : ''}.`,
+  });
+}
+
+function buildOperationAlerts(dashboard) {
+  const alerts = [];
+  const readings = dashboard?.recentReadings ?? [];
+  const now = Date.now();
+  const newestReadingTime = readings.reduce((latest, reading) => Math.max(latest, getReadingTime(reading)), 0);
+  const { start, end } = getCurrentShiftWindow(new Date());
+  const currentShiftReadings = readings.filter((reading) => {
+    const time = getReadingTime(reading);
+    return time >= start && time < end;
+  });
+
+  if (newestReadingTime && now - newestReadingTime > 8 * 60 * 60 * 1000) {
+    alerts.push({
+      key: 'stale-readings',
+      severity: 'critical',
+      title: 'No recent readings',
+      detail: `Latest reading was ${formatDateTime(newestReadingTime)}.`,
+    });
+  }
+
+  ['CHLORINATION', 'DEEPWELL'].forEach((siteType) => {
+    if (!currentShiftReadings.some((reading) => reading.site_type === siteType)) {
+      alerts.push({
+        key: `missing-${siteType}`,
+        severity: 'warning',
+        title: `${siteType === 'CHLORINATION' ? 'Chlorination' : 'Deepwell'} shift reading missing`,
+        detail: `No ${siteType.toLowerCase()} reading has been received for ${getCurrentShift().toLowerCase()}.`,
+      });
+    }
+  });
+
+  readings.slice(0, 20).forEach((reading) => {
+    if (reading.site_type === 'CHLORINATION') {
+      addRangeAlert(alerts, reading, 'ph', 'pH', 6.5, 8.5);
+      addRangeAlert(alerts, reading, 'rc_ppm', 'Residual chlorine', 0.2, 2, 'ppm');
+      addRangeAlert(alerts, reading, 'turbidity_ntu', 'Turbidity', 0, 5, 'NTU');
+      addRangeAlert(alerts, reading, 'pressure_psi', 'Pressure', 15, 100, 'psi');
+    }
+
+    if (reading.site_type === 'DEEPWELL') {
+      addRangeAlert(alerts, reading, 'tds_ppm', 'TDS', 0, 500, 'ppm');
+      addRangeAlert(alerts, reading, 'upstream_pressure_psi', 'Upstream pressure', 15, 120, 'psi');
+      addRangeAlert(alerts, reading, 'downstream_pressure_psi', 'Downstream pressure', 15, 120, 'psi');
+    }
+  });
+
+  if (dashboard?.pendingApprovals?.length) {
+    alerts.push({
+      key: 'pending-approvals',
+      severity: 'info',
+      title: 'Operator approvals waiting',
+      detail: `${dashboard.pendingApprovals.length} operator account(s) need admin review.`,
+    });
+  }
+
+  return alerts.slice(0, 8);
+}
+
+function PendingApprovalNotice({ dashboard, onOpenApprovals }) {
+  const [dismissed, setDismissed] = useState(false);
+  const pendingCount = dashboard?.pendingApprovals?.length ?? 0;
+
+  useEffect(() => {
+    if (!pendingCount) {
+      setDismissed(false);
+    }
+  }, [pendingCount]);
+
+  if (!pendingCount || dismissed) {
+    return null;
+  }
+
+  return (
+    <section className="pending-approval-notice">
+      <div>
+        <span className="pending-approval-icon">
+          <Bell size={18} />
+        </span>
+        <div>
+          <h3>Pending approvals <strong>{pendingCount}</strong></h3>
+          <p>{pendingCount} operator account(s) need your review.</p>
+          <button type="button" onClick={onOpenApprovals}>
+            Open approvals
+            <ArrowRight size={16} />
+          </button>
+        </div>
+      </div>
+      <button type="button" className="pending-dismiss-button" aria-label="Dismiss pending approvals" onClick={() => setDismissed(true)}>
+        <X size={18} />
+      </button>
+    </section>
+  );
+}
+
+function LiveSummaryPanel({ dashboard }) {
+  const stats = dashboard?.stats ?? {};
+  const summaryItems = [
+    { label: 'Operators', value: stats.totalOperators ?? 0, icon: Users },
+    { label: 'Approved', value: stats.approvedOperators ?? 0, icon: CheckCircle2 },
+    { label: 'Pending', value: stats.pendingOperators ?? 0, icon: Clock },
+    { label: 'Sites', value: stats.totalSites ?? 0, icon: Building2 },
+    { label: 'Readings today', value: stats.todayReadings ?? 0, icon: History },
+  ];
+
+  return (
+    <section className="live-summary-panel">
+      <header className="operation-alerts-heading">
+        <span className="section-icon">
+          <Zap size={16} />
+        </span>
+        <div>
+          <h3>Live summary</h3>
+          <p>Registrations, approvals, sites, and reading activity.</p>
+        </div>
+      </header>
+      <div className="live-summary-grid">
+        {summaryItems.map((item) => {
+          const Icon = item.icon;
+          return (
+            <article className="live-summary-card" key={item.label}>
+              <div>
+                <span>{item.label}</span>
+                <strong>{item.value}</strong>
+              </div>
+              <span className="live-summary-icon">
+                <Icon size={17} />
+              </span>
+            </article>
+          );
+        })}
+      </div>
+    </section>
+  );
+}
+
+function OperationAlertsPanel({ dashboard }) {
+  const alerts = buildOperationAlerts(dashboard);
+  const hasAlerts = alerts.length > 0;
+
+  return (
+    <section className={hasAlerts ? 'operation-alerts-panel has-alerts' : 'operation-alerts-panel'}>
+      <header className="operation-alerts-heading">
+        <span className="section-icon">
+          {hasAlerts ? <AlertTriangle size={16} /> : <ShieldCheck size={16} />}
+        </span>
+        <div>
+          <h3>Operations alerts</h3>
+          <p>{hasAlerts ? `${alerts.length} item(s) need attention` : 'No active operating alerts from recent readings.'}</p>
+        </div>
+      </header>
+
+      <div className={alerts.length >= 3 ? 'operation-alert-scroll has-peek' : 'operation-alert-scroll'}>
+        {hasAlerts ? (
+          <div className="operation-alert-grid">
+            {alerts.map((alert) => (
+              <article className={`operation-alert-card ${alert.severity}`} key={alert.key}>
+                <strong>{alert.title}</strong>
+                <p>{alert.detail}</p>
+              </article>
+            ))}
+          </div>
+        ) : (
+          <p className="chart-empty">No active operating alerts.</p>
+        )}
+      </div>
+    </section>
+  );
+}
+
+function OverviewTopPanels({ dashboard, isAdmin, onOpenApprovals }) {
+  return (
+    <>
+      <PendingApprovalNotice dashboard={dashboard} onOpenApprovals={onOpenApprovals} />
+      <div className={isAdmin ? 'overview-top-grid' : 'overview-top-grid summary-hidden'}>
+        {isAdmin ? <LiveSummaryPanel dashboard={dashboard} /> : null}
+        <OperationAlertsPanel dashboard={dashboard} />
+      </div>
+    </>
+  );
+}
+
 function OperatorsPanel({ operators, panelRef }) {
   const [currentShift, setCurrentShift] = useState(() => getCurrentShift());
   const operatorRows = (operators ?? [])
@@ -544,47 +768,197 @@ function RecentReadingCard({ reading }) {
   );
 }
 
+function formatCheckpointTime(date) {
+  return date.toLocaleTimeString('en-US', {
+    hour: 'numeric',
+    minute: '2-digit',
+  });
+}
+
+function getSlotStartTime(value) {
+  const parsed = new Date(value || '');
+  if (Number.isNaN(parsed.getTime())) {
+    return 0;
+  }
+
+  parsed.setMinutes(parsed.getMinutes() < 30 ? 0 : 30, 0, 0);
+  return parsed.getTime();
+}
+
+function getShiftWindow(shiftKey, now = new Date()) {
+  const currentHour = now.getHours();
+  if (shiftKey === 'elapsed') {
+    const start = new Date(now);
+    const end = new Date(getSlotStartTime(now) + 30 * 60 * 1000);
+
+    if (currentHour < 7) {
+      start.setDate(start.getDate() - 1);
+    }
+
+    start.setHours(7, 0, 0, 0);
+    return { shift: 'elapsed', start, end };
+  }
+
+  const resolvedShift =
+    shiftKey === 'current'
+      ? currentHour >= 7 && currentHour < 15
+        ? 'A'
+        : currentHour >= 15 && currentHour < 23
+          ? 'B'
+          : 'C'
+      : shiftKey;
+  const start = new Date(now);
+  const end = new Date(now);
+
+  if (resolvedShift === 'A') {
+    start.setHours(7, 0, 0, 0);
+    end.setHours(15, 0, 0, 0);
+  } else if (resolvedShift === 'B') {
+    start.setHours(15, 0, 0, 0);
+    end.setHours(23, 0, 0, 0);
+  } else {
+    if (currentHour < 7) {
+      start.setDate(start.getDate() - 1);
+    }
+
+    start.setHours(23, 0, 0, 0);
+    end.setTime(start.getTime());
+    end.setDate(end.getDate() + 1);
+    end.setHours(7, 0, 0, 0);
+  }
+
+  return { shift: resolvedShift, start, end };
+}
+
+function buildCheckpointSites(readings, siteType) {
+  const siteMap = new Map();
+
+  (readings ?? []).forEach((reading) => {
+    if (siteType !== 'all' && reading.site_type !== siteType) {
+      return;
+    }
+
+    const id = `${reading.site_type}:${reading.site?.name || reading.sites?.name || reading.site_id || 'main'}`;
+    siteMap.set(id, {
+      id,
+      siteType: reading.site_type,
+      name: reading.site?.name || reading.sites?.name || (reading.site_type === 'DEEPWELL' ? 'Main Deepwell' : 'Main Chlorination'),
+    });
+  });
+
+  if (!siteMap.size) {
+    if (siteType === 'all' || siteType === 'CHLORINATION') {
+      siteMap.set('CHLORINATION:main', { id: 'CHLORINATION:main', siteType: 'CHLORINATION', name: 'Main Chlorination' });
+    }
+
+    if (siteType === 'all' || siteType === 'DEEPWELL') {
+      siteMap.set('DEEPWELL:main', { id: 'DEEPWELL:main', siteType: 'DEEPWELL', name: 'Main Deepwell' });
+    }
+  }
+
+  return Array.from(siteMap.values()).sort((first, second) => first.siteType.localeCompare(second.siteType));
+}
+
+function buildCheckpointData(readings, { now, siteType, shift }) {
+  const { start, end } = getShiftWindow(shift, now);
+  const currentSlotStart = getSlotStartTime(now);
+  const sites = buildCheckpointSites(readings, siteType);
+  const matchingReadings = (readings ?? []).filter((reading) => siteType === 'all' || reading.site_type === siteType);
+  const readingsBySlot = new Map();
+
+  matchingReadings.forEach((reading) => {
+    const slotTime = getSlotStartTime(reading.slot_datetime || reading.reading_datetime || reading.created_at);
+    const siteName = reading.site?.name || reading.sites?.name || (reading.site_type === 'DEEPWELL' ? 'Main Deepwell' : 'Main Chlorination');
+    const key = `${slotTime}:${reading.site_type}:${siteName}`;
+    const current = readingsBySlot.get(key);
+
+    if (!current || getReadingTime(reading) > getReadingTime(current)) {
+      readingsBySlot.set(key, reading);
+    }
+  });
+
+  const rows = [];
+  const stats = { complete: 0, missing: 0, upcoming: 0 };
+
+  for (let time = start.getTime(); time < end.getTime(); time += 30 * 60 * 1000) {
+    const slotStart = new Date(time);
+    const slotEnd = new Date(time + 29 * 60 * 1000);
+    const isFuture = time > currentSlotStart;
+
+    if (isFuture) {
+      stats.upcoming += sites.length;
+      continue;
+    }
+
+    const items = sites.map((site) => {
+      const reading = readingsBySlot.get(`${time}:${site.siteType}:${site.name}`);
+      const operator = reading?.submitted_profile?.full_name || reading?.submitted_profile?.email || 'Operator';
+
+      return {
+        key: site.id,
+        name: site.name,
+        complete: Boolean(reading),
+        operator,
+      };
+    });
+    const completeCount = items.filter((item) => item.complete).length;
+    const missingCount = items.length - completeCount;
+
+    stats.complete += completeCount;
+    stats.missing += missingCount;
+
+    rows.push({
+      key: String(time),
+      label: formatCheckpointTime(slotStart),
+      rangeLabel: `${formatCheckpointTime(slotStart)}-${formatCheckpointTime(slotEnd)}`,
+      status: time === currentSlotStart && missingCount ? 'due' : missingCount ? 'missing' : 'complete',
+      badge: time === currentSlotStart && missingCount ? 'Due now' : missingCount ? 'Missing' : 'Complete',
+      items,
+    });
+  }
+
+  return {
+    stats,
+    rows: rows.reverse(),
+  };
+}
+
 function RecentReadingsPanel({ readings }) {
   const [typeFilter, setTypeFilter] = useState('all');
-  const [dateRange, setDateRange] = useState('all');
-  const sortedReadings = [...(readings ?? [])].sort((a, b) => getReadingTime(b) - getReadingTime(a));
-  const rangeReadings = sortedReadings.filter((reading) => isReadingInDateRange(reading, dateRange));
-  const chlorinationReadings = rangeReadings.filter((reading) => reading.site_type === 'CHLORINATION');
-  const deepwellReadings = rangeReadings.filter((reading) => reading.site_type === 'DEEPWELL');
-  const displayReadings =
-    typeFilter === 'all'
-      ? Array.from({ length: Math.max(chlorinationReadings.length, deepwellReadings.length) }).flatMap((_, index) =>
-          [chlorinationReadings[index], deepwellReadings[index]].filter(Boolean)
-        )
-      : rangeReadings.filter((reading) => reading.site_type === typeFilter);
-
+  const [shiftFilter, setShiftFilter] = useState('current');
+  const checkpointData = buildCheckpointData(readings ?? [], {
+    now: new Date(),
+    siteType: typeFilter,
+    shift: shiftFilter,
+  });
   const typeOptions = [
     { key: 'all', label: 'All', icon: Grid3X3 },
     { key: 'CHLORINATION', label: 'Chlorination', icon: Droplets },
     { key: 'DEEPWELL', label: 'Deepwell', icon: Zap },
   ];
-  const dateOptions = [
-    { key: 'all', label: 'All time', icon: Clock },
-    { key: 'today', label: 'Today', icon: CalendarDays },
-    { key: '24h', label: 'Last 24h', icon: Hourglass },
-    { key: '7d', label: 'Last 7 days', icon: CalendarDays },
+  const shiftOptions = [
+    { key: 'current', label: 'Current shift' },
+    { key: 'elapsed', label: 'All elapsed' },
+    { key: 'A', label: 'A-Shift' },
+    { key: 'B', label: 'B-Shift' },
+    { key: 'C', label: 'C-Shift' },
   ];
 
   return (
     <section className="recent-readings-panel">
       <header className="recent-readings-heading">
         <span className="section-icon">
-          <History size={16} />
+          <CheckCircle2 size={16} />
         </span>
         <div>
-          <h3>Recent readings</h3>
-          <p>This account has readings-only office access.</p>
+          <h3>30-minute checkpoints</h3>
+          <p>Current slot appears first. Future slots are counted in upcoming, not shown below.</p>
         </div>
       </header>
 
       <div className="recent-reading-filters">
         <div>
-          <span>Sort by type</span>
+          <span>Site type</span>
           <div className="recent-chip-row">
             {typeOptions.map((option) => {
               const Icon = option.icon;
@@ -604,36 +978,71 @@ function RecentReadingsPanel({ readings }) {
         </div>
 
         <div>
-          <span>Date range</span>
-          <div className="recent-chip-row">
-            {dateOptions.map((option) => {
-              const Icon = option.icon;
-              return (
-                <button
-                  type="button"
-                  key={option.key}
-                  className={dateRange === option.key ? 'active' : ''}
-                  onClick={() => setDateRange(option.key)}
-                >
-                  <Icon size={15} />
-                  {option.label}
-                </button>
-              );
-            })}
+          <span>Shift</span>
+          <div className="recent-chip-row checkpoint-shift-row">
+            {shiftOptions.map((option) => (
+              <button
+                type="button"
+                key={option.key}
+                className={shiftFilter === option.key ? 'active' : ''}
+                onClick={() => setShiftFilter(option.key)}
+              >
+                {option.label}
+              </button>
+            ))}
           </div>
         </div>
       </div>
 
-      {displayReadings.length ? (
-        <div className="recent-reading-scroll">
-          <div className="recent-reading-grid">
-            {displayReadings.map((reading) => (
-              <RecentReadingCard key={`${reading.site_type}-${reading.id}`} reading={reading} />
+      <div className="checkpoint-stat-grid">
+        <div>
+          <strong>{checkpointData.stats.complete}</strong>
+          <span>Complete</span>
+        </div>
+        <div>
+          <strong>{checkpointData.stats.missing}</strong>
+          <span>Missing</span>
+        </div>
+        <div>
+          <strong>{checkpointData.stats.upcoming}</strong>
+          <span>Upcoming</span>
+        </div>
+      </div>
+
+      {checkpointData.rows.length ? (
+        <div className="checkpoint-scroll">
+          <div className="checkpoint-timeline">
+            {checkpointData.rows.map((slot) => (
+              <article className={`checkpoint-slot ${slot.status}`} key={slot.key}>
+                <div className="checkpoint-marker" aria-hidden="true">
+                  {slot.status === 'complete' ? <CheckCircle2 size={17} /> : slot.status === 'due' ? <Clock size={17} /> : <AlertTriangle size={17} />}
+                </div>
+                <div className="checkpoint-slot-body">
+                  <div className="checkpoint-slot-head">
+                    <div>
+                      <h4>{slot.label}</h4>
+                      <p>{slot.rangeLabel}</p>
+                    </div>
+                    <strong>{slot.badge}</strong>
+                  </div>
+                  <div className="checkpoint-site-grid">
+                    {slot.items.map((item) => (
+                      <div className={`checkpoint-site-card ${item.complete ? 'complete' : slot.status === 'due' ? 'due' : 'missing'}`} key={item.key}>
+                        <span>{item.complete ? <CheckCircle2 size={15} /> : slot.status === 'due' ? <Clock size={15} /> : <AlertTriangle size={15} />}</span>
+                        <div>
+                          <strong>{item.name}</strong>
+                          <p>{item.complete ? `Done by ${item.operator}` : slot.status === 'due' ? 'Due now' : 'Missing'}</p>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </article>
             ))}
           </div>
         </div>
       ) : (
-        <p className="chart-empty">No recent readings found for this filter.</p>
+        <p className="chart-empty">No elapsed checkpoints found for this filter.</p>
       )}
     </section>
   );
@@ -641,8 +1050,10 @@ function RecentReadingsPanel({ readings }) {
 
 export default function OverviewScreen({
   dashboard,
+  isAdmin,
   activeSection = 'production',
   scrollRequest = 0,
+  onOpenApprovals,
   onVisibleSectionsChange,
 }) {
   const [powerZoom, setPowerZoom] = useState(1);
@@ -728,6 +1139,7 @@ export default function OverviewScreen({
 
   return (
     <>
+      <OverviewTopPanels dashboard={dashboard} isAdmin={isAdmin} onOpenApprovals={onOpenApprovals} />
       <section className="chart-grid">
         <ChartPanel
           title="Monthly Production"
