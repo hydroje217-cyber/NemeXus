@@ -6,6 +6,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { useAuth } from './context/AuthContext';
 import { useTheme } from './context/ThemeContext';
 import { supabaseReady } from './lib/supabase';
+import { isRecoveryUrl } from './utils/authRecovery';
 import AuthScreen from './screens/AuthScreen';
 import LoadingScreen from './screens/LoadingScreen';
 import OfficeDashboardScreen from './screens/OfficeDashboardScreen';
@@ -59,7 +60,15 @@ function getBackRoute(route) {
 }
 
 export default function NemeXusApp() {
-  const { loading, session, profile, authMessage, recoverSessionFromUrl } = useAuth();
+  const {
+    loading,
+    session,
+    profile,
+    authMessage,
+    passwordRecovery,
+    clearPasswordRecovery,
+    recoverSessionFromUrl,
+  } = useAuth();
   const { palette, statusBar } = useTheme();
   const styles = useMemo(() => createStyles(palette), [palette]);
   const [route, setRoute] = useState(initialRoute);
@@ -71,6 +80,16 @@ export default function NemeXusApp() {
       setRoute(initialRoute);
     }
   }, [profile, route.name, session]);
+
+  useEffect(() => {
+    if (!passwordRecovery?.active) {
+      return;
+    }
+
+    setResetMessage(passwordRecovery.message || '');
+    setResetTone(passwordRecovery.tone || 'info');
+    setRoute({ name: 'reset-password', params: {} });
+  }, [passwordRecovery]);
 
   useEffect(() => {
     if (Platform.OS !== 'android') {
@@ -101,6 +120,12 @@ export default function NemeXusApp() {
         return;
       }
 
+      if (isRecoveryUrl(url)) {
+        setResetMessage('');
+        setResetTone('info');
+        setRoute({ name: 'reset-password', params: {} });
+      }
+
       const result = await recoverSessionFromUrl(url);
       if (!mounted || !result.isRecovery) {
         return;
@@ -127,13 +152,17 @@ export default function NemeXusApp() {
     () => ({
       navigate: (name, params = {}) => setRoute({ name, params }),
       reset: () => setRoute(initialRoute),
+      finishPasswordReset: () => {
+        clearPasswordRecovery();
+        setRoute(initialRoute);
+      },
       goBack: () => {
         setRoute((current) => {
           return getBackRoute(current) || current;
         });
       },
     }),
-    []
+    [clearPasswordRecovery]
   );
 
   let screen = null;
@@ -145,8 +174,6 @@ export default function NemeXusApp() {
 
   if (!supabaseReady) {
     screen = <SetupRequiredScreen />;
-  } else if (loading) {
-    screen = <LoadingScreen />;
   } else if (route.name === 'reset-password') {
     screen = (
       <ResetPasswordScreen
@@ -155,6 +182,8 @@ export default function NemeXusApp() {
         initialTone={resetTone}
       />
     );
+  } else if (loading) {
+    screen = <LoadingScreen />;
   } else if (!session || !profile) {
     screen = <AuthScreen initialMessage={authMessage} initialTone={authMessage ? 'error' : 'info'} />;
   } else if (!isApprovedForApp) {

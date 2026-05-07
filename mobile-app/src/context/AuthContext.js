@@ -1,56 +1,12 @@
-import { createContext, useContext, useEffect, useMemo, useState } from 'react';
-import { Platform } from 'react-native';
+import { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
 import * as ExpoLinking from 'expo-linking';
 import { supabase, supabaseReady } from '../lib/supabase';
+import { isRecoveryUrl, readRecoveryParams } from '../utils/authRecovery';
 
 const AuthContext = createContext(null);
 
 function getPasswordResetRedirectUrl() {
-  if (Platform.OS === 'web') {
-    return ExpoLinking.createURL('reset-password');
-  }
-
-  return 'nemexus://reset-password';
-}
-
-function paramsFromUrlPart(value) {
-  if (!value) {
-    return new URLSearchParams();
-  }
-
-  const normalized = value.startsWith('?') || value.startsWith('#') ? value.slice(1) : value;
-  return new URLSearchParams(normalized);
-}
-
-function readRecoveryParams(url) {
-  if (!url) {
-    return {};
-  }
-
-  const parsed = ExpoLinking.parse(url);
-  const hashIndex = url.indexOf('#');
-  const queryIndex = url.indexOf('?');
-  const fragment = hashIndex >= 0 ? url.slice(hashIndex + 1) : '';
-  const query =
-    queryIndex >= 0
-      ? url.slice(queryIndex + 1, hashIndex >= 0 ? hashIndex : undefined)
-      : '';
-  const hashParams = paramsFromUrlPart(fragment);
-  const rawQueryParams = paramsFromUrlPart(query);
-  const queryParams = parsed.queryParams || {};
-  const code = rawQueryParams.get('code') || queryParams.code || '';
-  const path = parsed.path || parsed.hostname || '';
-
-  return {
-    code,
-    path,
-    accessToken: hashParams.get('access_token') || queryParams.access_token || '',
-    refreshToken: hashParams.get('refresh_token') || queryParams.refresh_token || '',
-    type: hashParams.get('type') || rawQueryParams.get('type') || queryParams.type || '',
-    errorCode: hashParams.get('error_code') || rawQueryParams.get('error_code') || queryParams.error_code || '',
-    errorDescription:
-      hashParams.get('error_description') || rawQueryParams.get('error_description') || queryParams.error_description || '',
-  };
+  return ExpoLinking.createURL('reset-password');
 }
 
 async function ensureProfile(user) {
@@ -102,6 +58,11 @@ export function AuthProvider({ children }) {
   const [loading, setLoading] = useState(true);
   const [authMessage, setAuthMessage] = useState('');
   const [pendingApprovalMessage, setPendingApprovalMessage] = useState('');
+  const [passwordRecovery, setPasswordRecovery] = useState({
+    active: false,
+    message: '',
+    tone: 'info',
+  });
 
   function clearAuthState(nextMessage = '') {
     setSession(null);
@@ -109,7 +70,83 @@ export function AuthProvider({ children }) {
     setLoading(false);
     setAuthMessage(nextMessage);
     setPendingApprovalMessage('');
+    setPasswordRecovery({ active: false, message: '', tone: 'info' });
   }
+
+  const recoverSessionFromUrl = useCallback(async (url) => {
+    if (!supabase) {
+      return { ok: false, isRecovery: false, message: 'Supabase is not configured yet.' };
+    }
+
+    const recovery = readRecoveryParams(url);
+    const isRecovery = isRecoveryUrl(url);
+
+    if (!isRecovery) {
+      return { ok: false, isRecovery: false, message: '' };
+    }
+
+    setPasswordRecovery({ active: true, message: '', tone: 'info' });
+
+    if (recovery.errorDescription) {
+      const message = decodeURIComponent(recovery.errorDescription).replace(/\+/g, ' ');
+      setPasswordRecovery({ active: true, message, tone: 'error' });
+      return {
+        ok: false,
+        isRecovery: true,
+        message,
+      };
+    }
+
+    if (recovery.code) {
+      const { error } = await supabase.auth.exchangeCodeForSession(recovery.code);
+
+      if (error) {
+        const message = error.message || 'Invalid reset link.';
+        setPasswordRecovery({ active: true, message, tone: 'error' });
+        return { ok: false, isRecovery: true, message };
+      }
+
+      return { ok: true, isRecovery: true, message: '' };
+    }
+
+    if (recovery.tokenHash) {
+      const { error } = await supabase.auth.verifyOtp({
+        token_hash: recovery.tokenHash,
+        type: 'recovery',
+      });
+
+      if (error) {
+        const message = error.message || 'Invalid reset link.';
+        setPasswordRecovery({ active: true, message, tone: 'error' });
+        return { ok: false, isRecovery: true, message };
+      }
+
+      return { ok: true, isRecovery: true, message: '' };
+    }
+
+    if (!recovery.accessToken || !recovery.refreshToken) {
+      const message = 'This password reset link is incomplete or invalid.';
+      setPasswordRecovery({ active: true, message, tone: 'error' });
+      return {
+        ok: false,
+        isRecovery: true,
+        message,
+      };
+    }
+
+    const { error } = await supabase.auth.setSession({
+      access_token: recovery.accessToken,
+      refresh_token: recovery.refreshToken,
+    });
+
+    if (error) {
+      const message = error.message || 'Invalid reset link.';
+      setPasswordRecovery({ active: true, message, tone: 'error' });
+      return { ok: false, isRecovery: true, message };
+    }
+
+    return { ok: true, isRecovery: true, message: '' };
+  }, []);
 
   useEffect(() => {
     if (!supabaseReady || !supabase) {
@@ -155,31 +192,47 @@ export function AuthProvider({ children }) {
 
     bootstrap();
 
-    const { data: listener } = supabase.auth.onAuthStateChange(async (_event, nextSession) => {
+    const { data: listener } = supabase.auth.onAuthStateChange((event, nextSession) => {
       if (!mounted) {
         return;
       }
 
-      setSession(nextSession ?? null);
-
-      if (nextSession?.user) {
-        try {
-          const nextProfile = await ensureProfile(nextSession.user);
-          if (mounted) {
-            setProfile(nextProfile);
-            setAuthMessage('');
-          }
-        } catch (profileError) {
-          if (mounted) {
-            setAuthMessage(profileError.message || 'Failed to load profile.');
-            setProfile(null);
-          }
-        }
-      } else {
-        setProfile(null);
+      if (event === 'PASSWORD_RECOVERY') {
+        setPasswordRecovery({ active: true, message: '', tone: 'info' });
       }
 
-      setLoading(false);
+      setSession(nextSession ?? null);
+
+      if (!nextSession?.user) {
+        setProfile(null);
+        setLoading(false);
+        return;
+      }
+
+      setLoading(true);
+
+      setTimeout(() => {
+        async function loadProfileAfterAuthChange() {
+          try {
+            const nextProfile = await ensureProfile(nextSession.user);
+            if (mounted) {
+              setProfile(nextProfile);
+              setAuthMessage('');
+            }
+          } catch (profileError) {
+            if (mounted) {
+              setAuthMessage(profileError.message || 'Failed to load profile.');
+              setProfile(null);
+            }
+          } finally {
+            if (mounted) {
+              setLoading(false);
+            }
+          }
+        }
+
+        loadProfileAfterAuthChange();
+      }, 0);
     });
 
     return () => {
@@ -197,6 +250,10 @@ export function AuthProvider({ children }) {
       authMessage,
       setAuthMessage,
       pendingApprovalMessage,
+      passwordRecovery,
+      clearPasswordRecovery() {
+        setPasswordRecovery({ active: false, message: '', tone: 'info' });
+      },
       clearPendingApprovalMessage() {
         setPendingApprovalMessage('');
       },
@@ -264,57 +321,7 @@ export function AuthProvider({ children }) {
           message: 'Password reset email sent. Open the link to choose a new password.',
         };
       },
-      async recoverSessionFromUrl(url) {
-        if (!supabase) {
-          return { ok: false, isRecovery: false, message: 'Supabase is not configured yet.' };
-        }
-
-        const recovery = readRecoveryParams(url);
-        const isRecovery =
-          recovery.type === 'recovery' ||
-          (Boolean(recovery.code) && String(recovery.path || '').includes('reset-password'));
-
-        if (!isRecovery) {
-          return { ok: false, isRecovery: false, message: '' };
-        }
-
-        if (recovery.errorDescription) {
-          return {
-            ok: false,
-            isRecovery: true,
-            message: decodeURIComponent(recovery.errorDescription).replace(/\+/g, ' '),
-          };
-        }
-
-        if (recovery.code) {
-          const { error } = await supabase.auth.exchangeCodeForSession(recovery.code);
-
-          if (error) {
-            return { ok: false, isRecovery: true, message: error.message || 'Invalid reset link.' };
-          }
-
-          return { ok: true, isRecovery: true, message: '' };
-        }
-
-        if (!recovery.accessToken || !recovery.refreshToken) {
-          return {
-            ok: false,
-            isRecovery: true,
-            message: 'This password reset link is incomplete or invalid.',
-          };
-        }
-
-        const { error } = await supabase.auth.setSession({
-          access_token: recovery.accessToken,
-          refresh_token: recovery.refreshToken,
-        });
-
-        if (error) {
-          return { ok: false, isRecovery: true, message: error.message || 'Invalid reset link.' };
-        }
-
-        return { ok: true, isRecovery: true, message: '' };
-      },
+      recoverSessionFromUrl,
       async updatePassword({ password }) {
         if (!supabase) {
           return { ok: false, message: 'Supabase is not configured yet.' };
@@ -326,6 +333,7 @@ export function AuthProvider({ children }) {
           return { ok: false, message: error.message };
         }
 
+        setPasswordRecovery({ active: false, message: '', tone: 'info' });
         return { ok: true, message: 'Password updated successfully.' };
       },
       async signOut() {
@@ -357,7 +365,7 @@ export function AuthProvider({ children }) {
         }
       },
     }),
-    [authMessage, loading, pendingApprovalMessage, profile, session]
+    [authMessage, loading, passwordRecovery, pendingApprovalMessage, profile, recoverSessionFromUrl, session]
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

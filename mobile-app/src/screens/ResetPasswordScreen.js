@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { StyleSheet, Text, View } from 'react-native';
 import Ionicons from '@expo/vector-icons/Ionicons';
 import Card from '../components/Card';
@@ -21,6 +21,11 @@ export default function ResetPasswordScreen({ navigation, initialMessage = '', i
 
   const passwordsMatch = password.trim() && confirmPassword.trim() && password === confirmPassword;
 
+  useEffect(() => {
+    setMessage(initialMessage);
+    setTone(initialTone);
+  }, [initialMessage, initialTone]);
+
   async function handleSubmit() {
     if (!passwordsMatch) {
       setTone('error');
@@ -35,7 +40,11 @@ export default function ResetPasswordScreen({ navigation, initialMessage = '', i
     setMessage(action.message || (action.ok ? 'Password updated.' : 'Unable to update password.'));
 
     if (action.ok) {
-      navigation.reset();
+      if (navigation.finishPasswordReset) {
+        navigation.finishPasswordReset();
+      } else {
+        navigation.reset();
+      }
     }
   }
 

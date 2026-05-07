@@ -8,10 +8,46 @@ import PrimaryButton from '../components/PrimaryButton';
 import ScreenShell from '../components/ScreenShell';
 import { useAuth } from '../context/AuthContext';
 import { useTheme } from '../context/ThemeContext';
+import { supabase } from '../lib/supabase';
 import { approveOperatorProfile, assignProfileRole, getOfficeDashboardSnapshot } from '../services/office';
 import { formatTimestamp } from '../utils/time';
 
 let styles = StyleSheet.create({});
+
+const DAY_MINUTES = 24 * 60;
+const HALF_HOUR_MINUTES = 30;
+
+function formatSlotClock(minutes) {
+  const normalizedMinutes = ((minutes % DAY_MINUTES) + DAY_MINUTES) % DAY_MINUTES;
+  const hours24 = Math.floor(normalizedMinutes / 60);
+  const mins = normalizedMinutes % 60;
+  const suffix = hours24 >= 12 ? 'PM' : 'AM';
+  const hours12 = hours24 % 12 || 12;
+
+  return `${hours12}:${String(mins).padStart(2, '0')} ${suffix}`;
+}
+
+function createHalfHourWindows() {
+  return Array.from({ length: DAY_MINUTES / HALF_HOUR_MINUTES }, (_, index) => {
+    const startMinutes = index * HALF_HOUR_MINUTES;
+
+    return {
+      key: `slot-${String(startMinutes).padStart(4, '0')}`,
+      label: formatSlotClock(startMinutes),
+      startMinutes,
+      endMinutes: startMinutes + HALF_HOUR_MINUTES - 1,
+    };
+  });
+}
+
+const SLOT_WINDOWS = createHalfHourWindows();
+const SHIFT_FILTERS = [
+  { key: 'current', label: 'Current shift' },
+  { key: 'all', label: 'All elapsed' },
+  { key: 'a', label: 'A-Shift' },
+  { key: 'b', label: 'B-Shift' },
+  { key: 'c', label: 'C-Shift' },
+];
 
 function formatMaybeTimestamp(value) {
   if (!value) {
@@ -20,6 +56,186 @@ function formatMaybeTimestamp(value) {
 
   const parsed = new Date(value);
   return Number.isNaN(parsed.getTime()) ? value : formatTimestamp(parsed);
+}
+
+function createSlotTime(minutes, baseDate = new Date(), dayOffset = 0) {
+  const date = new Date(baseDate.getFullYear(), baseDate.getMonth(), baseDate.getDate() + dayOffset);
+  date.setMinutes(minutes);
+  return date;
+}
+
+function getMinutesSinceMidnight(value) {
+  const date = new Date(value);
+  return date.getHours() * 60 + date.getMinutes();
+}
+
+function findReadingForWindow(readings, site, window) {
+  return readings.find((reading) => {
+    const siteId = reading.site_id ?? reading.site?.id;
+    if (String(siteId) !== String(site.id) || !reading.slot_datetime) {
+      return false;
+    }
+
+    const slotDate = new Date(reading.slot_datetime);
+    return slotDate >= window.windowStart && slotDate <= window.windowEnd;
+  });
+}
+
+function getCheckpointStatus(window, reading, now) {
+  if (reading) {
+    const submittedAt = new Date(reading.created_at || reading.reading_datetime || reading.slot_datetime);
+    return submittedAt > window.windowEnd ? 'late' : 'complete';
+  }
+
+  if (now > window.windowEnd) {
+    return 'missing';
+  }
+
+  if (now >= window.windowStart && now <= window.windowEnd) {
+    return 'due';
+  }
+
+  return 'upcoming';
+}
+
+function getWindowDayOffset(window, now = new Date()) {
+  const currentMinutes = getMinutesSinceMidnight(now);
+  const isAfterMidnightCShift = currentMinutes < 7 * 60;
+  const isPreviousNightSlot = getShiftKeyForMinutes(window.startMinutes) === 'c' && window.startMinutes >= 23 * 60;
+
+  return isAfterMidnightCShift && isPreviousNightSlot ? -1 : 0;
+}
+
+function buildSlotTimeline({ sites = [], readings = [], typeFilter = 'all', now = new Date() }) {
+  const filteredSites = sites.filter((site) => {
+    return typeFilter === 'all' || String(site.type || '').toLowerCase() === typeFilter;
+  });
+
+  return SLOT_WINDOWS.map((window) => {
+    const dayOffset = getWindowDayOffset(window, now);
+    const windowWithDates = {
+      ...window,
+      dayOffset,
+      windowStart: createSlotTime(window.startMinutes, now, dayOffset),
+      windowEnd: createSlotTime(window.endMinutes, now, dayOffset),
+    };
+    const checkpoints = filteredSites.map((site) => {
+      const reading = findReadingForWindow(readings, site, windowWithDates);
+      return {
+        id: `${windowWithDates.key}:${site.id}`,
+        site,
+        reading,
+        status: getCheckpointStatus(windowWithDates, reading, now),
+      };
+    });
+
+    return {
+      ...windowWithDates,
+      timeLabel: `${formatSlotClock(windowWithDates.startMinutes)}-${formatSlotClock(windowWithDates.endMinutes)}`,
+      sortTime: windowWithDates.windowStart.getTime(),
+      checkpoints,
+    };
+  });
+}
+
+function summarizeTimeline(timeline) {
+  const checkpoints = timeline.flatMap((slot) => slot.checkpoints);
+
+  return checkpoints.reduce(
+    (summary, checkpoint) => ({
+      ...summary,
+      total: summary.total + 1,
+      [checkpoint.status]: (summary[checkpoint.status] ?? 0) + 1,
+    }),
+    {
+      total: 0,
+      complete: 0,
+      due: 0,
+      late: 0,
+      missing: 0,
+      upcoming: 0,
+    }
+  );
+}
+
+function summarizeTimelineSlots(timeline) {
+  return timeline.reduce(
+    (summary, slot) => {
+      const status = getSlotAggregateStatus(slot);
+
+      return {
+        ...summary,
+        total: summary.total + 1,
+        [status]: (summary[status] ?? 0) + 1,
+      };
+    },
+    {
+      total: 0,
+      complete: 0,
+      due: 0,
+      late: 0,
+      missing: 0,
+      upcoming: 0,
+    }
+  );
+}
+
+function getSlotAggregateStatus(slot) {
+  const statuses = slot.checkpoints.map((checkpoint) => checkpoint.status);
+
+  if (!statuses.length) {
+    return 'upcoming';
+  }
+
+  if (statuses.includes('missing')) {
+    return 'missing';
+  }
+
+  if (statuses.includes('due')) {
+    return 'due';
+  }
+
+  if (statuses.includes('late')) {
+    return 'late';
+  }
+
+  if (statuses.every((status) => status === 'complete')) {
+    return 'complete';
+  }
+
+  return 'upcoming';
+}
+
+function getShiftKeyForMinutes(minutes) {
+  if (minutes >= 7 * 60 && minutes < 15 * 60) {
+    return 'a';
+  }
+
+  if (minutes >= 15 * 60 && minutes < 23 * 60) {
+    return 'b';
+  }
+
+  return 'c';
+}
+
+function getCurrentShiftKey(now = new Date()) {
+  return getShiftKeyForMinutes(getMinutesSinceMidnight(now));
+}
+
+function filterTimelineByShift(timeline, shiftFilter, now = new Date()) {
+  if (shiftFilter === 'all') {
+    return timeline;
+  }
+
+  const targetShift = shiftFilter === 'current' ? getCurrentShiftKey(now) : shiftFilter;
+  return timeline.filter((slot) => getShiftKeyForMinutes(slot.startMinutes) === targetShift);
+}
+
+function sortVisibleTimeline(timeline, now = new Date(), shiftFilter = 'current') {
+  const shiftSlots = filterTimelineByShift(timeline, shiftFilter, now);
+  return shiftSlots
+    .filter((slot) => slot.windowStart <= now)
+    .sort((a, b) => b.sortTime - a.sortTime);
 }
 
 function SectionHeader({ title, body, iconName = 'grid-outline', iconColor }) {
@@ -147,6 +363,8 @@ export default function OfficeDashboardScreen({ navigation }) {
     },
     pendingApprovals: [],
     recentReadings: [],
+    sites: [],
+    todaySlotReadings: [],
     profiles: [],
     monthlyProduction: {
       totalProduction: 0,
@@ -175,6 +393,8 @@ export default function OfficeDashboardScreen({ navigation }) {
   const [showApprovalAnimation, setShowApprovalAnimation] = useState(false);
   const [message, setMessage] = useState('');
   const [tone, setTone] = useState('info');
+  const [currentTime, setCurrentTime] = useState(() => new Date());
+  const [shiftFilter, setShiftFilter] = useState('current');
 
   const sections = useMemo(() => {
     if (!isAdmin) {
@@ -278,6 +498,26 @@ export default function OfficeDashboardScreen({ navigation }) {
   }, []);
 
   useEffect(() => {
+    if (!supabase || !profile?.role || !['admin', 'manager', 'supervisor'].includes(profile.role)) {
+      return undefined;
+    }
+
+    const refreshSlotTimeline = () => {
+      loadDashboard({ silent: true });
+    };
+
+    const channel = supabase
+      .channel('office-slot-checkpoints')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'chlorination_readings' }, refreshSlotTimeline)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'deepwell_readings' }, refreshSlotTimeline)
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [profile?.role]);
+
+  useEffect(() => {
     if (!dashboard.pendingApprovals.length) {
       setPendingNoticeDismissed(false);
     }
@@ -367,6 +607,45 @@ export default function OfficeDashboardScreen({ navigation }) {
     setVisibleRecentReadings(3);
   }, [recentReadingDateFilter, recentReadingFilter, dashboard.recentReadings]);
 
+  useEffect(() => {
+    const intervalId = setInterval(() => setCurrentTime(new Date()), 30000);
+    return () => clearInterval(intervalId);
+  }, []);
+
+  const slotTimeline = useMemo(
+    () =>
+      sortVisibleTimeline(
+        buildSlotTimeline({
+          sites: dashboard.sites,
+          readings: dashboard.todaySlotReadings,
+          typeFilter: recentReadingFilter,
+          now: currentTime,
+        }),
+        currentTime,
+        shiftFilter
+      ),
+    [currentTime, dashboard.sites, dashboard.todaySlotReadings, recentReadingFilter, shiftFilter]
+  );
+
+  const expectedSlotTimeline = useMemo(
+    () =>
+      filterTimelineByShift(
+        buildSlotTimeline({
+          sites: dashboard.sites,
+          readings: dashboard.todaySlotReadings,
+          typeFilter: recentReadingFilter,
+          now: currentTime,
+        }),
+        shiftFilter,
+        currentTime
+      ),
+    [currentTime, dashboard.sites, dashboard.todaySlotReadings, recentReadingFilter, shiftFilter]
+  );
+
+  const slotSummary = useMemo(() => summarizeTimelineSlots(slotTimeline), [slotTimeline]);
+  const expectedSlotSummary = useMemo(() => summarizeTimelineSlots(expectedSlotTimeline), [expectedSlotTimeline]);
+  const upcomingSlotCount = Math.max(expectedSlotSummary.upcoming - slotSummary.upcoming, 0);
+
   const canViewGraphs = profile?.role === 'manager' || profile?.role === 'supervisor';
   const quickActions = [
     {
@@ -396,7 +675,7 @@ export default function OfficeDashboardScreen({ navigation }) {
 
   function renderOverview() {
     if (!isAdmin) {
-      return renderReadings();
+      return renderSlotTimeline();
     }
 
     return (
@@ -456,12 +735,12 @@ export default function OfficeDashboardScreen({ navigation }) {
             actionIconColor={isDark ? palette.ink900 : palette.navy700}
           />
           <SummaryCard
-            title="Recent readings"
-            value={dashboard.recentReadings.length}
-            body="Check the latest submissions from the field."
+            title="Slot checkpoints"
+            value={`${slotSummary.complete}/${slotSummary.total}`}
+            body="Confirm today's 30-minute site readings by time slot."
             actionLabel="Open"
             onPress={() => setActiveSection('readings')}
-            iconName="reader-outline"
+            iconName="checkmark-done-outline"
             iconColor={palette.ink900}
             actionIconColor={isDark ? palette.ink900 : palette.navy700}
           />
@@ -485,7 +764,7 @@ export default function OfficeDashboardScreen({ navigation }) {
 
   function renderApprovals() {
     if (!isAdmin) {
-      return renderReadings();
+      return renderSlotTimeline();
     }
 
     return (
@@ -533,6 +812,153 @@ export default function OfficeDashboardScreen({ navigation }) {
           <MessageBanner tone="success">No pending registrations are waiting for office approval.</MessageBanner>
         )}
       </Card>
+    );
+  }
+
+  function renderSlotTimeline() {
+    const statusMeta = {
+      complete: { label: 'Done', iconName: 'checkmark-circle', style: styles.timelineStatusComplete },
+      due: { label: 'Due now', iconName: 'radio-button-on', style: styles.timelineStatusDue },
+      late: { label: 'Late', iconName: 'time', style: styles.timelineStatusLate },
+      missing: { label: 'Missing', iconName: 'alert-circle', style: styles.timelineStatusMissing },
+      upcoming: { label: 'Upcoming', iconName: 'ellipse-outline', style: styles.timelineStatusUpcoming },
+    };
+
+    return (
+      <View style={styles.sectionStack}>
+        <Card style={styles.panelCard}>
+          <SectionHeader
+            title="30-minute checkpoints"
+            body="Current slot appears first. Future slots are counted in Upcoming, not shown below."
+            iconName="checkmark-done-outline"
+            iconColor={palette.teal600}
+          />
+
+          <View style={styles.recentReadingControlGroup}>
+            <Text style={styles.recentReadingGroupLabel}>Site type</Text>
+            <View style={styles.recentReadingFilterRow}>
+              {recentReadingFilterOptions.map((option) => {
+                const active = option.key === recentReadingFilter;
+
+                return (
+                  <Pressable
+                    key={option.key}
+                    onPress={() => setRecentReadingFilter(option.key)}
+                    style={[styles.recentReadingFilterChip, active && styles.recentReadingFilterChipActive]}
+                  >
+                    <Ionicons
+                      name={option.iconName}
+                      size={12}
+                      color={active ? palette.onAccent : palette.ink700}
+                    />
+                    <Text style={[styles.recentReadingFilterChipText, active && styles.recentReadingFilterChipTextActive]}>
+                      {option.label}
+                    </Text>
+                  </Pressable>
+                );
+              })}
+            </View>
+          </View>
+
+          <View style={styles.recentReadingDateGroup}>
+            <Text style={styles.recentReadingGroupLabel}>Shift</Text>
+            <View style={styles.recentReadingDateFilterRow}>
+              {SHIFT_FILTERS.map((option) => {
+                const active = option.key === shiftFilter;
+
+                return (
+                  <Pressable
+                    key={option.key}
+                    onPress={() => setShiftFilter(option.key)}
+                    style={[styles.recentReadingDateChip, active && styles.recentReadingDateChipActive]}
+                  >
+                    <Text style={[styles.recentReadingDateChipText, active && styles.recentReadingDateChipTextActive]}>
+                      {option.label}
+                    </Text>
+                  </Pressable>
+                );
+              })}
+            </View>
+          </View>
+
+          <View style={styles.timelineSummaryGrid}>
+            <View style={styles.timelineSummaryTile}>
+              <Text style={styles.timelineSummaryValue}>{slotSummary.complete}</Text>
+              <Text style={styles.timelineSummaryLabel}>Complete</Text>
+            </View>
+            <View style={styles.timelineSummaryTile}>
+              <Text style={styles.timelineSummaryValue}>{slotSummary.missing}</Text>
+              <Text style={styles.timelineSummaryLabel}>Missing</Text>
+            </View>
+            <View style={styles.timelineSummaryTile}>
+              <Text style={styles.timelineSummaryValue}>{upcomingSlotCount}</Text>
+              <Text style={styles.timelineSummaryLabel}>Upcoming</Text>
+            </View>
+          </View>
+
+          {slotSummary.total ? (
+            <View style={styles.timelineStack}>
+              {slotTimeline.map((slot, index) => {
+                const aggregateStatus = getSlotAggregateStatus(slot);
+                const aggregateMeta = statusMeta[aggregateStatus] || statusMeta.upcoming;
+
+                return (
+                  <View key={slot.key} style={styles.timelineSlot}>
+                    <View style={styles.timelineMarkerColumn}>
+                      <View style={[styles.timelineNode, aggregateMeta.style]}>
+                        <Ionicons name={aggregateMeta.iconName} size={14} color={palette.onAccent} />
+                      </View>
+                      {index < slotTimeline.length - 1 ? <View style={styles.timelineLine} /> : null}
+                    </View>
+
+                    <View style={styles.timelineSlotBody}>
+                      <View style={styles.timelineSlotHeader}>
+                        <View>
+                          <Text style={styles.timelineSlotTitle}>{slot.label}</Text>
+                          <Text style={styles.timelineSlotTime}>{slot.timeLabel}</Text>
+                        </View>
+                        <View style={[styles.timelineStatusPill, aggregateMeta.style]}>
+                          <Text style={styles.timelineStatusPillText}>{aggregateMeta.label}</Text>
+                        </View>
+                      </View>
+
+                      <View style={styles.timelineCheckpointGrid}>
+                        {slot.checkpoints.map((checkpoint) => {
+                          const checkpointMeta = statusMeta[checkpoint.status] || statusMeta.upcoming;
+                          const submitter =
+                            checkpoint.reading?.submitted_profile?.full_name ||
+                            checkpoint.reading?.submitted_profile?.email ||
+                            '';
+
+                          return (
+                            <View key={checkpoint.id} style={styles.timelineCheckpoint}>
+                              <View style={[styles.timelineCheckpointIcon, checkpointMeta.style]}>
+                                <Ionicons name={checkpointMeta.iconName} size={12} color={palette.onAccent} />
+                              </View>
+                              <View style={styles.timelineCheckpointCopy}>
+                                <Text style={styles.timelineCheckpointSite} numberOfLines={1}>
+                                  {checkpoint.site.name}
+                                </Text>
+                                <Text style={styles.timelineCheckpointMeta} numberOfLines={2}>
+                                  {checkpoint.reading
+                                    ? `${checkpointMeta.label} by ${submitter || '-'}`
+                                    : checkpointMeta.label}
+                                </Text>
+                              </View>
+                            </View>
+                          );
+                        })}
+                      </View>
+                    </View>
+                  </View>
+                );
+              })}
+            </View>
+          ) : (
+            <MessageBanner tone="info">No active sites match this checkpoint filter right now.</MessageBanner>
+          )}
+        </Card>
+      </View>
     );
   }
 
@@ -817,7 +1243,7 @@ export default function OfficeDashboardScreen({ navigation }) {
     }
 
     if (activeSection === 'readings') {
-      return renderReadings();
+      return renderSlotTimeline();
     }
 
     if (activeSection === 'roles') {
@@ -1674,6 +2100,155 @@ function createStyles(palette, isDark) {
   },
   recentReadingDateChipTextActive: {
     color: palette.onAccent,
+  },
+  timelineSummaryGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 6,
+  },
+  timelineSummaryTile: {
+    minWidth: 94,
+    flexGrow: 1,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: palette.line,
+    backgroundColor: isDark ? '#152636' : '#F7FBFF',
+    paddingHorizontal: 9,
+    paddingVertical: 7,
+  },
+  timelineSummaryValue: {
+    color: isDark ? palette.ink900 : palette.navy900,
+    fontSize: 16,
+    fontWeight: '900',
+  },
+  timelineSummaryLabel: {
+    marginTop: 2,
+    color: palette.ink500,
+    fontSize: 9,
+    fontWeight: '800',
+    textTransform: 'uppercase',
+    letterSpacing: 0.3,
+  },
+  timelineStack: {
+    gap: 0,
+  },
+  timelineSlot: {
+    flexDirection: 'row',
+    gap: 10,
+  },
+  timelineMarkerColumn: {
+    width: 28,
+    alignItems: 'center',
+  },
+  timelineNode: {
+    width: 28,
+    height: 28,
+    borderRadius: 999,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
+  },
+  timelineLine: {
+    flex: 1,
+    width: 2,
+    minHeight: 30,
+    backgroundColor: isDark ? '#284256' : '#D7E5EF',
+  },
+  timelineSlotBody: {
+    flex: 1,
+    gap: 8,
+    paddingBottom: 12,
+  },
+  timelineSlotHeader: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    justifyContent: 'space-between',
+    gap: 8,
+  },
+  timelineSlotTitle: {
+    color: palette.ink900,
+    fontSize: 13,
+    fontWeight: '900',
+  },
+  timelineSlotTime: {
+    marginTop: 2,
+    color: palette.ink500,
+    fontSize: 10,
+    fontWeight: '700',
+  },
+  timelineStatusPill: {
+    borderRadius: 999,
+    borderWidth: 1,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+  },
+  timelineStatusPillText: {
+    color: palette.onAccent,
+    fontSize: 9,
+    fontWeight: '900',
+    textTransform: 'uppercase',
+  },
+  timelineCheckpointGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 6,
+  },
+  timelineCheckpoint: {
+    minWidth: 136,
+    flexGrow: 1,
+    flexBasis: '48%',
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 7,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: palette.line,
+    backgroundColor: isDark ? palette.mist : '#FAFDFF',
+    padding: 8,
+  },
+  timelineCheckpointIcon: {
+    width: 22,
+    height: 22,
+    borderRadius: 999,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
+  },
+  timelineCheckpointCopy: {
+    flex: 1,
+    minWidth: 0,
+  },
+  timelineCheckpointSite: {
+    color: palette.ink900,
+    fontSize: 11,
+    fontWeight: '800',
+  },
+  timelineCheckpointMeta: {
+    marginTop: 2,
+    color: palette.ink700,
+    fontSize: 9,
+    lineHeight: 12,
+    fontWeight: '700',
+  },
+  timelineStatusComplete: {
+    backgroundColor: isDark ? '#103228' : '#16A34A',
+    borderColor: isDark ? '#2F8F72' : '#15803D',
+  },
+  timelineStatusDue: {
+    backgroundColor: isDark ? '#123A37' : '#0EA5A4',
+    borderColor: isDark ? '#1FAF9E' : '#0F766E',
+  },
+  timelineStatusLate: {
+    backgroundColor: isDark ? '#3A2910' : '#F59E0B',
+    borderColor: isDark ? '#A77925' : '#B45309',
+  },
+  timelineStatusMissing: {
+    backgroundColor: isDark ? '#35121C' : '#DC2626',
+    borderColor: isDark ? '#A84257' : '#991B1B',
+  },
+  timelineStatusUpcoming: {
+    backgroundColor: isDark ? '#24364A' : '#64748B',
+    borderColor: isDark ? '#41678A' : '#475569',
   },
   roleFilterChip: {
     flexDirection: 'row',

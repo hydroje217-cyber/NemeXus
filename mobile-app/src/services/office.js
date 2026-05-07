@@ -25,6 +25,18 @@ function startOfTodayIso() {
   return start.toISOString();
 }
 
+function startOfPreviousNightIso() {
+  const now = new Date();
+  const start = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1, 23);
+  return start.toISOString();
+}
+
+function startOfTomorrowIso() {
+  const now = new Date();
+  const start = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1);
+  return start.toISOString();
+}
+
 function normalizeOfficeReading(row, siteType) {
   return {
     ...row,
@@ -39,15 +51,20 @@ function sortByCreatedAtDesc(a, b) {
 export async function getOfficeDashboardSnapshot({ limit = 12 } = {}) {
   requireSupabase();
 
+  const todayIso = startOfTodayIso();
+  const slotQueryStartIso = startOfPreviousNightIso();
+  const tomorrowIso = startOfTomorrowIso();
   const [
     pendingApprovalsResult,
     totalOperatorsResult,
     approvedOperatorsResult,
-    sitesCountResult,
+    sitesResult,
     todayChlorinationReadingsResult,
     todayDeepwellReadingsResult,
     recentChlorinationReadingsResult,
     recentDeepwellReadingsResult,
+    todayChlorinationSlotsResult,
+    todayDeepwellSlotsResult,
     profilesResult,
     monthlyChlorinationReadingsResult,
     monthlyDeepwellReadingsResult,
@@ -69,15 +86,19 @@ export async function getOfficeDashboardSnapshot({ limit = 12 } = {}) {
       .eq('role', 'operator')
       .eq('is_active', true)
       .eq('is_approved', true),
-    supabase.from('sites').select('id', { count: 'exact', head: true }),
+    supabase
+      .from('sites')
+      .select('id, name, type')
+      .order('type', { ascending: true })
+      .order('name', { ascending: true }),
     supabase
       .from('chlorination_readings')
       .select('id', { count: 'exact', head: true })
-      .gte('created_at', startOfTodayIso()),
+      .gte('created_at', todayIso),
     supabase
       .from('deepwell_readings')
       .select('id', { count: 'exact', head: true })
-      .gte('created_at', startOfTodayIso()),
+      .gte('created_at', todayIso),
     supabase
       .from('chlorination_readings')
       .select(
@@ -92,6 +113,22 @@ export async function getOfficeDashboardSnapshot({ limit = 12 } = {}) {
       )
       .order('created_at', { ascending: false })
       .limit(limit),
+    supabase
+      .from('chlorination_readings')
+      .select(
+        'id, site_id, status, created_at, reading_datetime, slot_datetime, site:sites(id, name, type), submitted_profile:profiles!chlorination_readings_submitted_by_fkey(full_name, email)'
+      )
+      .gte('slot_datetime', slotQueryStartIso)
+      .lt('slot_datetime', tomorrowIso)
+      .order('slot_datetime', { ascending: true }),
+    supabase
+      .from('deepwell_readings')
+      .select(
+        'id, site_id, status, created_at, reading_datetime, slot_datetime, site:sites(id, name, type), submitted_profile:profiles!deepwell_readings_submitted_by_fkey(full_name, email)'
+      )
+      .gte('slot_datetime', slotQueryStartIso)
+      .lt('slot_datetime', tomorrowIso)
+      .order('slot_datetime', { ascending: true }),
     supabase
       .from('profiles')
       .select('id, email, full_name, role, is_active, is_approved, approved_at, created_at')
@@ -112,11 +149,13 @@ export async function getOfficeDashboardSnapshot({ limit = 12 } = {}) {
   throwIfError(pendingApprovalsResult, 'Failed to load pending approvals.');
   throwIfError(totalOperatorsResult, 'Failed to count operators.');
   throwIfError(approvedOperatorsResult, 'Failed to count approved operators.');
-  throwIfError(sitesCountResult, 'Failed to count sites.');
+  throwIfError(sitesResult, 'Failed to load sites.');
   throwIfError(todayChlorinationReadingsResult, 'Failed to count today chlorination readings.');
   throwIfError(todayDeepwellReadingsResult, 'Failed to count today deepwell readings.');
   throwIfError(recentChlorinationReadingsResult, 'Failed to load recent chlorination readings.');
   throwIfError(recentDeepwellReadingsResult, 'Failed to load recent deepwell readings.');
+  throwIfError(todayChlorinationSlotsResult, 'Failed to load today chlorination slots.');
+  throwIfError(todayDeepwellSlotsResult, 'Failed to load today deepwell slots.');
   throwIfError(profilesResult, 'Failed to load account roles.');
   throwIfError(monthlyChlorinationReadingsResult, 'Failed to load monthly chlorination production.');
   throwIfError(monthlyDeepwellReadingsResult, 'Failed to load monthly deepwell power consumption.');
@@ -128,16 +167,23 @@ export async function getOfficeDashboardSnapshot({ limit = 12 } = {}) {
     .sort(sortByCreatedAtDesc)
     .slice(0, limit);
 
+  const todaySlotReadings = [
+    ...(todayChlorinationSlotsResult.data ?? []).map((row) => normalizeOfficeReading(row, 'CHLORINATION')),
+    ...(todayDeepwellSlotsResult.data ?? []).map((row) => normalizeOfficeReading(row, 'DEEPWELL')),
+  ];
+
   return {
     stats: {
       totalOperators: totalOperatorsResult.count ?? 0,
       approvedOperators: approvedOperatorsResult.count ?? 0,
       pendingOperators: pendingApprovalsResult.data?.length ?? 0,
-      totalSites: sitesCountResult.count ?? 0,
+      totalSites: sitesResult.data?.length ?? 0,
       todayReadings: (todayChlorinationReadingsResult.count ?? 0) + (todayDeepwellReadingsResult.count ?? 0),
     },
     pendingApprovals: pendingApprovalsResult.data ?? [],
     recentReadings,
+    sites: sitesResult.data ?? [],
+    todaySlotReadings,
     profiles: profilesResult.data ?? [],
     monthlyProduction: buildMonthlyProduction(monthlyChlorinationReadingsResult.data ?? []),
     dailyProduction: buildDailyProduction(monthlyChlorinationReadingsResult.data ?? []),
