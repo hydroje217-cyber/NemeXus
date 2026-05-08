@@ -29,6 +29,29 @@ import { aggregateDailyRows } from '../utils/production';
 const DEFAULT_HISTORY_LIMIT = 50;
 const MAX_HISTORY_LIMIT = 200;
 const MAX_AVERAGE_SOURCE_LIMIT = 500;
+const SHIFT_OPTIONS = [
+  { key: 'all', label: 'All shifts' },
+  { key: 'a', label: 'A-Shift' },
+  { key: 'b', label: 'B-Shift' },
+  { key: 'c', label: 'C-Shift' },
+];
+const SHIFT_SORT_ORDER = {
+  c: 0,
+  b: 1,
+  a: 2,
+};
+const LOGSHEET_TIME_SLOTS = Array.from({ length: 48 }, (_, index) => {
+  const minutes = index * 30;
+  const hours = Math.floor(minutes / 60);
+  const mins = minutes % 60;
+  return `${String(hours).padStart(2, '0')}${String(mins).padStart(2, '0')}H`;
+});
+const LOGSHEET_SHIFT_ROWS = [
+  { label: 'C-Shift', slots: LOGSHEET_TIME_SLOTS.slice(0, 14) },
+  { label: 'A-Shift', slots: LOGSHEET_TIME_SLOTS.slice(14, 30) },
+  { label: 'B-Shift', slots: LOGSHEET_TIME_SLOTS.slice(30, 46) },
+  { label: 'C-Shift', slots: LOGSHEET_TIME_SLOTS.slice(46) },
+];
 
 function formatDateValue(date) {
   if (!date) {
@@ -149,6 +172,357 @@ function formatTimeSlot(value) {
   const hours = String(date.getHours()).padStart(2, '0');
   const minutes = String(date.getMinutes()).padStart(2, '0');
   return `${hours}${minutes}H`;
+}
+
+function getShiftKeyForDate(value) {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return '';
+  }
+
+  const minutes = date.getHours() * 60 + date.getMinutes();
+  if (minutes >= 7 * 60 && minutes < 15 * 60) {
+    return 'a';
+  }
+
+  if (minutes >= 15 * 60 && minutes < 23 * 60) {
+    return 'b';
+  }
+
+  return 'c';
+}
+
+function getShiftLabel(value) {
+  const shiftKey = getShiftKeyForDate(value);
+  return shiftKey ? `${shiftKey.toUpperCase()}-Shift` : '-';
+}
+
+function getShiftStartTime(row) {
+  const slotDate = new Date(row?.slot_datetime || row?.reading_datetime || 0);
+  if (Number.isNaN(slotDate.getTime())) {
+    return 0;
+  }
+
+  const shiftKey = getShiftKeyForDate(slotDate);
+  if (shiftKey === 'a') {
+    return new Date(slotDate.getFullYear(), slotDate.getMonth(), slotDate.getDate(), 7).getTime();
+  }
+
+  if (shiftKey === 'b') {
+    return new Date(slotDate.getFullYear(), slotDate.getMonth(), slotDate.getDate(), 15).getTime();
+  }
+
+  const cShiftDayOffset = slotDate.getHours() < 7 ? -1 : 0;
+  return new Date(slotDate.getFullYear(), slotDate.getMonth(), slotDate.getDate() + cShiftDayOffset, 23).getTime();
+}
+
+function arrangeRowsByShift(rows, shiftFilter = 'all') {
+  return [...rows]
+    .filter((row) => shiftFilter === 'all' || getShiftKeyForDate(row.slot_datetime || row.reading_datetime) === shiftFilter)
+    .sort((a, b) => {
+      const shiftDiff = getShiftStartTime(b) - getShiftStartTime(a);
+      if (shiftDiff !== 0) {
+        return shiftDiff;
+      }
+
+      const aShift = getShiftKeyForDate(a.slot_datetime || a.reading_datetime);
+      const bShift = getShiftKeyForDate(b.slot_datetime || b.reading_datetime);
+      const orderDiff = (SHIFT_SORT_ORDER[aShift] ?? 99) - (SHIFT_SORT_ORDER[bShift] ?? 99);
+      if (orderDiff !== 0) {
+        return orderDiff;
+      }
+
+      return new Date(b.slot_datetime || b.reading_datetime || 0).getTime() - new Date(a.slot_datetime || a.reading_datetime || 0).getTime();
+    });
+}
+
+function getLocalDateKey(value) {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return 'Undated';
+  }
+
+  return formatDateValue(date);
+}
+
+function getReadingSiteName(row) {
+  return row?.sites?.name || row?.site?.name || 'All sites';
+}
+
+function sanitizeSheetName(value) {
+  return String(value || 'Sheet')
+    .replace(/[:\\/?*[\]]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, 31) || 'Sheet';
+}
+
+function appendUniqueSheet(workbook, sheet, baseName) {
+  const existingNames = new Set(workbook.SheetNames);
+  const safeBase = sanitizeSheetName(baseName);
+  let name = safeBase;
+  let index = 2;
+
+  while (existingNames.has(name)) {
+    const suffix = ` ${index}`;
+    name = sanitizeSheetName(`${safeBase.slice(0, 31 - suffix.length)}${suffix}`);
+    index += 1;
+  }
+
+  XLSX.utils.book_append_sheet(workbook, sheet, name);
+}
+
+function groupRowsByLogsheet(rows) {
+  return rows.reduce((groups, row) => {
+    const dateKey = getLocalDateKey(row.slot_datetime || row.reading_datetime);
+    const siteName = getReadingSiteName(row);
+    const groupKey = `${dateKey}::${siteName}`;
+
+    if (!groups[groupKey]) {
+      groups[groupKey] = {
+        dateKey,
+        siteName,
+        rows: [],
+      };
+    }
+
+    groups[groupKey].rows.push(row);
+    return groups;
+  }, {});
+}
+
+function indexRowsByTime(rows) {
+  return rows.reduce((indexed, row) => {
+    const time = formatTimeSlot(row.slot_datetime || row.reading_datetime);
+    indexed[time] = row;
+    return indexed;
+  }, {});
+}
+
+function getSubmitterName(row) {
+  return row?.submitted_profile?.full_name || row?.submitted_profile?.email || '';
+}
+
+function getShiftRows(rows, shiftKey) {
+  return rows.filter((row) => getShiftKeyForDate(row.slot_datetime || row.reading_datetime) === shiftKey);
+}
+
+function getLatestShiftRow(rows, shiftKey) {
+  return getShiftRows(rows, shiftKey).sort(
+    (a, b) => new Date(b.slot_datetime || b.reading_datetime || 0).getTime() - new Date(a.slot_datetime || a.reading_datetime || 0).getTime()
+  )[0];
+}
+
+function sumShiftField(rows, shiftKey, field) {
+  const total = getShiftRows(rows, shiftKey).reduce((sum, row) => sum + (Number(row[field]) || 0), 0);
+  return total || '';
+}
+
+function latestShiftValue(rows, shiftKey, field) {
+  const row = getShiftRows(rows, shiftKey)
+    .filter((item) => item[field] !== null && item[field] !== undefined && item[field] !== '')
+    .sort((a, b) => new Date(b.slot_datetime || b.reading_datetime || 0).getTime() - new Date(a.slot_datetime || a.reading_datetime || 0).getTime())[0];
+
+  return row?.[field] ?? '';
+}
+
+function firstNumber(...values) {
+  return values.find((value) => value !== null && value !== undefined && value !== '') ?? '';
+}
+
+function buildChlorinationLogsheet({ dateKey, siteName, rows }) {
+  const indexedRows = indexRowsByTime(rows);
+  const aoa = [
+    ['DAILY MONITORING LOG SHEET', '', '', '', '', '', '', '', '', 'CHLORINATION HOUSE', '', '', '', '', '', ''],
+    ['Date:', dateKey, '', '', '', '', '', '', '', 'Site:', siteName, '', '', '', '', ''],
+    ['Time', 'Pressure', 'Analysis', '', '', '', '', 'Flowmeter', '', 'STATUS / REMARKS', '', '', '', '', '', ''],
+    ['', '', 'RC', 'Turbidity', 'pH', 'TDS', 'Tank Level', 'Flowrate', 'Totalizer', '', '', '', '', '', '', ''],
+    ['', 'psi', 'ppm', 'ntu', '', 'ppm', 'liters', 'm3/hr', 'm3', '', '', '', '', '', '', ''],
+  ];
+
+  LOGSHEET_SHIFT_ROWS.forEach((shift) => {
+    aoa.push([shift.label, '', '', '', '', '', '', '', '', '', '', '', '', '', '', '']);
+    shift.slots.forEach((slot) => {
+      const row = indexedRows[slot] || {};
+      aoa.push([
+        slot,
+        firstNumber(row.pressure_psi),
+        firstNumber(row.rc_ppm),
+        firstNumber(row.turbidity_ntu),
+        firstNumber(row.ph),
+        firstNumber(row.tds_ppm),
+        firstNumber(row.tank_level_liters),
+        firstNumber(row.flowrate_m3hr),
+        firstNumber(row.totalizer),
+        row.remarks || row.status || '',
+        '',
+        '',
+        '',
+        '',
+        '',
+        getSubmitterName(row),
+      ]);
+    });
+  });
+
+  aoa.push([]);
+  aoa.push(['READING TIME', '', 'TOTALIZER (m3)', '', '', 'PRODUCTION (m3)', '', '', 'CHLORINE USAGE (kg)', '', 'PEROXIDE CONSUMPTION', '', 'POWER CONSUMPTION (KWH)', '', 'FIELDMAN', '']);
+  [
+    ['A-Shift', '(0700H)', 'a'],
+    ['B-Shift', '(1500H)', 'b'],
+    ['C-Shift', '(2400H)', 'c'],
+  ].forEach(([label, time, shiftKey]) => {
+    const latestRow = getLatestShiftRow(rows, shiftKey);
+    aoa.push([
+      label,
+      time,
+      latestRow?.totalizer ?? '',
+      '',
+      '',
+      '',
+      '',
+      '',
+      latestShiftValue(rows, shiftKey, 'chlorine_consumed'),
+      '',
+      latestShiftValue(rows, shiftKey, 'peroxide_consumption'),
+      '',
+      latestShiftValue(rows, shiftKey, 'chlorination_power_kwh'),
+      '',
+      getSubmitterName(latestRow),
+      '',
+    ]);
+  });
+
+  const sheet = XLSX.utils.aoa_to_sheet(aoa);
+  sheet['!cols'] = [
+    { wch: 9 },
+    { wch: 10 },
+    { wch: 10 },
+    { wch: 11 },
+    { wch: 8 },
+    { wch: 9 },
+    { wch: 12 },
+    { wch: 11 },
+    { wch: 11 },
+    { wch: 18 },
+    { wch: 10 },
+    { wch: 10 },
+    { wch: 18 },
+    { wch: 18 },
+    { wch: 10 },
+    { wch: 18 },
+  ];
+  sheet['!merges'] = [
+    XLSX.utils.decode_range('A1:I1'),
+    XLSX.utils.decode_range('J1:L1'),
+    XLSX.utils.decode_range('C3:G3'),
+    XLSX.utils.decode_range('H3:I3'),
+    XLSX.utils.decode_range('J3:L5'),
+    XLSX.utils.decode_range('A59:B59'),
+    XLSX.utils.decode_range('C59:E59'),
+    XLSX.utils.decode_range('F59:H59'),
+    XLSX.utils.decode_range('I59:J59'),
+    XLSX.utils.decode_range('K59:L59'),
+    XLSX.utils.decode_range('M59:N59'),
+    XLSX.utils.decode_range('O59:P59'),
+  ];
+  return sheet;
+}
+
+function buildDeepwellLogsheet({ dateKey, siteName, rows }) {
+  const indexedRows = indexRowsByTime(rows);
+  const aoa = [
+    ['DAILY MONITORING LOG SHEET', '', '', '', '', '', '', '', '', 'DEEP WELL HOUSE', '', ''],
+    ['Date:', dateKey, '', '', '', '', '', '', '', 'Site:', siteName, ''],
+    ['Time', 'Upstream Pressure', 'Downstream Pressure', 'Flow rate', 'Frequency', 'Voltage (V)', '', '', 'Amperage', 'TDS', 'Remarks', ''],
+    ['', 'psi', 'psi', 'm3/hr', 'Hz', 'L1', 'L2', 'L3', 'A', 'ppm', '', ''],
+  ];
+
+  LOGSHEET_SHIFT_ROWS.forEach((shift) => {
+    aoa.push([shift.label, '', '', '', '', '', '', '', '', '', '', '']);
+    shift.slots.forEach((slot) => {
+      const row = indexedRows[slot] || {};
+      aoa.push([
+        slot,
+        firstNumber(row.upstream_pressure_psi),
+        firstNumber(row.downstream_pressure_psi),
+        firstNumber(row.flowrate_m3hr),
+        firstNumber(row.vfd_frequency_hz),
+        firstNumber(row.voltage_l1_v),
+        firstNumber(row.voltage_l2_v),
+        firstNumber(row.voltage_l3_v),
+        firstNumber(row.amperage_a),
+        firstNumber(row.tds_ppm),
+        row.remarks || row.status || '',
+        getSubmitterName(row),
+      ]);
+    });
+  });
+
+  aoa.push([]);
+  aoa.push(['READING TIME', '', '', 'POWER READING (KWH)', '', '', 'CONSUMPTION (KWH)', '', '', 'FIELDMAN', '', '']);
+  [
+    ['A-Shift', '(0700H)', 'a'],
+    ['B-Shift', '(1500H)', 'b'],
+    ['C-Shift', '(2400H)', 'c'],
+  ].forEach(([label, time, shiftKey]) => {
+    const latestRow = getLatestShiftRow(rows, shiftKey);
+    aoa.push([
+      label,
+      time,
+      '',
+      latestRow?.power_kwh_shift ?? '',
+      '',
+      '',
+      sumShiftField(rows, shiftKey, 'power_kwh_shift'),
+      '',
+      '',
+      getSubmitterName(latestRow),
+      '',
+      '',
+    ]);
+  });
+
+  const sheet = XLSX.utils.aoa_to_sheet(aoa);
+  sheet['!cols'] = [
+    { wch: 9 },
+    { wch: 14 },
+    { wch: 15 },
+    { wch: 11 },
+    { wch: 11 },
+    { wch: 9 },
+    { wch: 9 },
+    { wch: 9 },
+    { wch: 10 },
+    { wch: 9 },
+    { wch: 20 },
+    { wch: 18 },
+  ];
+  sheet['!merges'] = [
+    XLSX.utils.decode_range('A1:I1'),
+    XLSX.utils.decode_range('J1:L1'),
+    XLSX.utils.decode_range('F3:H3'),
+    XLSX.utils.decode_range('K3:L4'),
+    XLSX.utils.decode_range('A58:C58'),
+    XLSX.utils.decode_range('D58:F58'),
+    XLSX.utils.decode_range('G58:I58'),
+    XLSX.utils.decode_range('J58:L58'),
+  ];
+  return sheet;
+}
+
+function appendLogsheetSheets(workbook, rows, tableMode) {
+  const groupedRows = groupRowsByLogsheet(rows);
+  Object.values(groupedRows)
+    .sort((a, b) => `${a.dateKey} ${a.siteName}`.localeCompare(`${b.dateKey} ${b.siteName}`))
+    .forEach((group) => {
+      const sheet =
+        tableMode === 'DEEPWELL'
+          ? buildDeepwellLogsheet(group)
+          : buildChlorinationLogsheet(group);
+      const prefix = tableMode === 'DEEPWELL' ? 'DW' : 'CH';
+      appendUniqueSheet(workbook, sheet, `${prefix} ${group.dateKey} ${group.siteName}`);
+    });
 }
 
 function displayValue(value) {
@@ -506,6 +880,7 @@ export default function ReadingHistoryScreen({ navigation, site, source }) {
   const [items, setItems] = useState([]);
   const [dailyAverageRows, setDailyAverageRows] = useState([]);
   const [activeHistoryView, setActiveHistoryView] = useState('records');
+  const [historyShiftFilter, setHistoryShiftFilter] = useState('all');
   const [loading, setLoading] = useState(false);
   const [exporting, setExporting] = useState(false);
   const [exportFormat, setExportFormat] = useState('csv');
@@ -516,6 +891,7 @@ export default function ReadingHistoryScreen({ navigation, site, source }) {
 
   const chlorinationColumns = [
     { key: 'date', label: 'Date', width: 110, render: (row) => formatShortDateTime(row.slot_datetime).slice(0, 10) },
+    { key: 'shift', label: 'Shift', width: 90, render: (row) => getShiftLabel(row.slot_datetime) },
     { key: 'time', label: 'Time', width: 90, render: (row) => formatTimeSlot(row.slot_datetime) },
     { key: 'pressure', label: 'Pressure', width: 90, render: (row) => row.pressure_psi },
     { key: 'rc', label: 'RC', width: 80, render: (row) => row.rc_ppm },
@@ -535,6 +911,7 @@ export default function ReadingHistoryScreen({ navigation, site, source }) {
 
   const deepwellColumns = [
     { key: 'date', label: 'Date', width: 110, render: (row) => formatShortDateTime(row.slot_datetime).slice(0, 10) },
+    { key: 'shift', label: 'Shift', width: 90, render: (row) => getShiftLabel(row.slot_datetime) },
     { key: 'time', label: 'Time', width: 90, render: (row) => formatTimeSlot(row.slot_datetime) },
     { key: 'upstream', label: 'Upstream', width: 95, render: (row) => row.upstream_pressure_psi },
     { key: 'downstream', label: 'Downstream', width: 105, render: (row) => row.downstream_pressure_psi },
@@ -553,6 +930,7 @@ export default function ReadingHistoryScreen({ navigation, site, source }) {
 
   const genericColumns = [
     { key: 'date', label: 'Date', width: 110, render: (row) => formatShortDateTime(row.slot_datetime).slice(0, 10) },
+    { key: 'shift', label: 'Shift', width: 90, render: (row) => getShiftLabel(row.slot_datetime) },
     { key: 'time', label: 'Time', width: 90, render: (row) => formatTimeSlot(row.slot_datetime) },
     { key: 'site', label: 'Site', width: 170, render: (row) => row.sites?.name || '-' },
     { key: 'type', label: 'Type', width: 110, render: (row) => row.site_type || '-' },
@@ -618,6 +996,7 @@ export default function ReadingHistoryScreen({ navigation, site, source }) {
         ? deepwellColumns
         : genericColumns;
   const canShowDailyAverageView = supportsDailyAverageMode(resolvedTableMode);
+  const arrangedItems = useMemo(() => arrangeRowsByShift(items, historyShiftFilter), [items, historyShiftFilter]);
 
   async function loadHistory(nextFilters) {
     setLoading(true);
@@ -736,6 +1115,7 @@ export default function ReadingHistoryScreen({ navigation, site, source }) {
     setFromDate('');
     setToDate('');
     setLimit(String(DEFAULT_HISTORY_LIMIT));
+    setHistoryShiftFilter('all');
     await loadHistory({
       tableMode,
       fromDate: '',
@@ -750,7 +1130,7 @@ export default function ReadingHistoryScreen({ navigation, site, source }) {
       return;
     }
 
-    if (!items.length && !dailyAverageRows.length) {
+    if (!arrangedItems.length && !dailyAverageRows.length) {
       setMessage(`Load some reading history first before exporting to ${exportFormat.toUpperCase()}.`);
       return;
     }
@@ -768,9 +1148,8 @@ export default function ReadingHistoryScreen({ navigation, site, source }) {
           XLSX.utils.book_append_sheet(workbook, averageSheet, 'Daily Averages');
         }
 
-        if (items.length) {
-          const historySheet = XLSX.utils.aoa_to_sheet(buildTableRows(activeColumns, items));
-          XLSX.utils.book_append_sheet(workbook, historySheet, 'Detailed History');
+        if (arrangedItems.length) {
+          appendLogsheetSheets(workbook, arrangedItems, resolvedTableMode);
         }
 
         const fileName = buildExportFileName(tableMode, site?.name, 'xlsx');
@@ -825,7 +1204,7 @@ export default function ReadingHistoryScreen({ navigation, site, source }) {
           dailyAverageColumns,
           dailyAverageRows,
           activeColumns,
-          items,
+          items: arrangedItems,
         });
 
         if (Platform.OS === 'web') {
@@ -866,8 +1245,8 @@ export default function ReadingHistoryScreen({ navigation, site, source }) {
           sections.push(buildCsvSection('Daily Average Values', dailyAverageColumns, dailyAverageRows));
         }
 
-        if (items.length) {
-          sections.push(buildCsvSection('Detailed Reading History', activeColumns, items));
+        if (arrangedItems.length) {
+          sections.push(buildCsvSection('Detailed Reading History', activeColumns, arrangedItems));
         }
 
         const csvContent = `\uFEFF${sections.join('\n\n')}`;
@@ -1249,6 +1628,30 @@ export default function ReadingHistoryScreen({ navigation, site, source }) {
 
           {activeHistoryView === 'records' || !canShowDailyAverageView ? (
             <>
+              <View style={styles.shiftArrangeCard}>
+                <View style={styles.shiftArrangeHeader}>
+                  <Ionicons name="swap-vertical-outline" size={13} color={palette.ink500} />
+                  <Text style={styles.shiftArrangeTitle}>Arrange by shift</Text>
+                </View>
+                <View style={styles.shiftArrangeChips}>
+                  {SHIFT_OPTIONS.map((option) => {
+                    const active = historyShiftFilter === option.key;
+
+                    return (
+                      <Pressable
+                        key={option.key}
+                        onPress={() => setHistoryShiftFilter(option.key)}
+                        style={[styles.shiftArrangeChip, active && styles.shiftArrangeChipActive]}
+                      >
+                        <Text style={[styles.shiftArrangeChipText, active && styles.shiftArrangeChipTextActive]}>
+                          {option.label}
+                        </Text>
+                      </Pressable>
+                    );
+                  })}
+                </View>
+              </View>
+
               <View style={styles.tableSectionLabelRow}>
                 <Ionicons name="reader-outline" size={13} color={palette.ink500} />
                 <Text style={styles.tableSectionLabel}>
@@ -1257,7 +1660,7 @@ export default function ReadingHistoryScreen({ navigation, site, source }) {
               </View>
               <DataTable
                 columns={activeColumns}
-                rows={items}
+                rows={arrangedItems}
                 emptyMessage={
                   isOfficeView
                     ? `Try another date range or confirm ${resolvedTableMode.toLowerCase()} readings have already been submitted to the database.`
@@ -1588,6 +1991,55 @@ function createStyles(palette, isDark) {
       fontWeight: '800',
     },
     historyViewTabTextActive: {
+      color: palette.onAccent,
+    },
+    shiftArrangeCard: {
+      gap: 8,
+      borderRadius: 10,
+      borderWidth: 1,
+      borderColor: palette.line,
+      backgroundColor: isDark ? '#0C1621' : '#F9FCFF',
+      padding: 8,
+    },
+    shiftArrangeHeader: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 6,
+    },
+    shiftArrangeTitle: {
+      color: palette.ink700,
+      fontSize: 11,
+      fontWeight: '900',
+      textTransform: 'uppercase',
+      letterSpacing: 0.3,
+    },
+    shiftArrangeChips: {
+      flexDirection: 'row',
+      flexWrap: 'wrap',
+      gap: 6,
+    },
+    shiftArrangeChip: {
+      minHeight: 30,
+      minWidth: 72,
+      alignItems: 'center',
+      justifyContent: 'center',
+      borderRadius: 999,
+      borderWidth: 1,
+      borderColor: palette.line,
+      backgroundColor: isDark ? '#132131' : '#F3F8FD',
+      paddingHorizontal: 10,
+      paddingVertical: 6,
+    },
+    shiftArrangeChipActive: {
+      backgroundColor: palette.navy700,
+      borderColor: palette.cyan300,
+    },
+    shiftArrangeChipText: {
+      color: palette.ink700,
+      fontSize: 10,
+      fontWeight: '800',
+    },
+    shiftArrangeChipTextActive: {
       color: palette.onAccent,
     },
     exportButtonLabel: {
