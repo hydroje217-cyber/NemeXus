@@ -116,7 +116,7 @@ export async function getOfficeDashboardSnapshot({ limit = 12 } = {}) {
     supabase
       .from('chlorination_readings')
       .select(
-        'id, site_id, status, created_at, reading_datetime, slot_datetime, site:sites(id, name, type), submitted_profile:profiles!chlorination_readings_submitted_by_fkey(full_name, email)'
+        'id, site_id, status, remarks, created_at, reading_datetime, slot_datetime, totalizer, pressure_psi, rc_ppm, turbidity_ntu, ph, tds_ppm, tank_level_liters, flowrate_m3hr, chlorine_consumed, peroxide_consumption, chlorination_power_kwh, site:sites(id, name, type), submitted_profile:profiles!chlorination_readings_submitted_by_fkey(full_name, email)'
       )
       .gte('slot_datetime', slotQueryStartIso)
       .lt('slot_datetime', tomorrowIso)
@@ -124,7 +124,7 @@ export async function getOfficeDashboardSnapshot({ limit = 12 } = {}) {
     supabase
       .from('deepwell_readings')
       .select(
-        'id, site_id, status, created_at, reading_datetime, slot_datetime, site:sites(id, name, type), submitted_profile:profiles!deepwell_readings_submitted_by_fkey(full_name, email)'
+        'id, site_id, status, remarks, created_at, reading_datetime, slot_datetime, upstream_pressure_psi, downstream_pressure_psi, flowrate_m3hr, vfd_frequency_hz, voltage_l1_v, voltage_l2_v, voltage_l3_v, amperage_a, tds_ppm, power_kwh_shift, site:sites(id, name, type), submitted_profile:profiles!deepwell_readings_submitted_by_fkey(full_name, email)'
       )
       .gte('slot_datetime', slotQueryStartIso)
       .lt('slot_datetime', tomorrowIso)
