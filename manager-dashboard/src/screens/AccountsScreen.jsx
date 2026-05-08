@@ -21,6 +21,7 @@ function formatDateTime(value) {
 
 export default function AccountsScreen({ accounts, currentProfileId, workingId, onRoleChange, onDeleteAccount }) {
   const [pendingDeleteAccount, setPendingDeleteAccount] = useState(null);
+  const [selectedAccountId, setSelectedAccountId] = useState(null);
 
   function handleDeleteConfirm() {
     if (!pendingDeleteAccount) {
@@ -58,7 +59,11 @@ export default function AccountsScreen({ accounts, currentProfileId, workingId, 
                 const isCurrentAccount = account.id === currentProfileId;
 
                 return (
-                  <tr key={account.id}>
+                  <tr
+                    className={selectedAccountId === account.id ? 'selected-table-row' : undefined}
+                    key={account.id}
+                    onClick={() => setSelectedAccountId(account.id)}
+                  >
                     <td>{account.full_name || '-'}</td>
                     <td>{account.email || '-'}</td>
                     <td>

@@ -196,6 +196,7 @@
 
 .dark-mode .recent-reading-card p,
 .dark-mode .operator-card p,
+.dark-mode .operator-detail-row,
 .dark-mode .checkpoint-slot-head p,
 .dark-mode .checkpoint-site-card p,
 .dark-mode .operation-alerts-heading p,
@@ -203,6 +204,10 @@
 .dark-mode .readings-field > span,
 .dark-mode .chart-tooltip span {
   color: #b7cbd2;
+}
+
+.dark-mode .operator-detail-row strong {
+  color: #e9f2f4;
 }
 
 .dark-mode .checkpoint-stat-grid strong,
@@ -311,6 +316,14 @@
 
 .dark-mode .readings-table-wrap tr:nth-child(even) td {
   background: #101b25;
+}
+
+.dark-mode tbody tr.selected-table-row td,
+.dark-mode .readings-table-wrap tr.selected-table-row td,
+.dark-mode .readings-table-wrap tr.selected-table-row:nth-child(even) td {
+  background: #143f45;
+  border-bottom-color: #2e7580;
+  color: #e9f7f8;
 }
 
 .dark-mode .badge {
@@ -507,6 +520,10 @@
     grid-template-columns: 1fr;
   }
 
+  .overview-top-grid.summary-hidden .operation-alert-grid {
+    grid-template-columns: 1fr;
+  }
+
   .chart-grid {
     grid-template-columns: 1fr;
   }
@@ -533,13 +550,18 @@
   }
 
   .readings-form-grid {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
+    grid-template-columns: repeat(4, minmax(0, 1fr));
   }
 
-  .readings-field.full,
-  .readings-actions.full,
   .readings-table-toggle.in-filters {
-    grid-column: 1 / -1;
+    grid-column: span 2;
+  }
+
+  .readings-filter-site,
+  .readings-filter-status,
+  .readings-filter-search,
+  .readings-filter-actions {
+    grid-column: span 2;
   }
 
   .operator-list-panel {

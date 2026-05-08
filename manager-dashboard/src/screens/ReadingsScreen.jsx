@@ -306,6 +306,7 @@ export default function ReadingsScreen({ selectedTableMode = CHLORINATION }) {
   const [pageSize, setPageSize] = useState('25');
   const [currentPage, setCurrentPage] = useState(1);
   const [selectedReading, setSelectedReading] = useState(null);
+  const [selectedTableRow, setSelectedTableRow] = useState(null);
   const [items, setItems] = useState([]);
   const [dailyAverageRows, setDailyAverageRows] = useState([]);
   const [loading, setLoading] = useState(false);
@@ -614,7 +615,7 @@ export default function ReadingsScreen({ selectedTableMode = CHLORINATION }) {
         </header>
 
         <div className="readings-form-grid">
-          <div className="readings-table-toggle in-filters" aria-label="Reading table display">
+          <div className="readings-table-toggle in-filters readings-filter-toggle" aria-label="Reading table display">
             <button
               type="button"
               className={visibleTable === 'averages' ? 'active' : ''}
@@ -633,7 +634,7 @@ export default function ReadingsScreen({ selectedTableMode = CHLORINATION }) {
             </button>
           </div>
 
-          <label className="readings-field">
+          <label className="readings-field readings-filter-date">
             <span>From date</span>
             <div className="input-with-icon">
               <CalendarDays size={17} />
@@ -641,7 +642,7 @@ export default function ReadingsScreen({ selectedTableMode = CHLORINATION }) {
             </div>
           </label>
 
-          <label className="readings-field">
+          <label className="readings-field readings-filter-date">
             <span>To date</span>
             <div className="input-with-icon">
               <CalendarDays size={17} />
@@ -649,7 +650,7 @@ export default function ReadingsScreen({ selectedTableMode = CHLORINATION }) {
             </div>
           </label>
 
-          <label className="readings-field full">
+          <label className="readings-field readings-filter-limit">
             <span>Limit</span>
             <div className="input-with-icon">
               <List size={17} />
@@ -657,7 +658,7 @@ export default function ReadingsScreen({ selectedTableMode = CHLORINATION }) {
             </div>
           </label>
 
-          <label className="readings-field">
+          <label className="readings-field readings-filter-site">
             <span>Site</span>
             <select value={siteFilter} onChange={(event) => setSiteFilter(event.target.value)}>
               <option value="all">All sites</option>
@@ -667,7 +668,7 @@ export default function ReadingsScreen({ selectedTableMode = CHLORINATION }) {
             </select>
           </label>
 
-          <label className="readings-field">
+          <label className="readings-field readings-filter-status">
             <span>Status</span>
             <select value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)}>
               <option value="all">All statuses</option>
@@ -677,7 +678,7 @@ export default function ReadingsScreen({ selectedTableMode = CHLORINATION }) {
             </select>
           </label>
 
-          <label className="readings-field full">
+          <label className="readings-field readings-filter-search">
             <span>Search</span>
             <div className="input-with-icon">
               <Search size={17} />
@@ -690,7 +691,7 @@ export default function ReadingsScreen({ selectedTableMode = CHLORINATION }) {
             </div>
           </label>
 
-          <label className="readings-field">
+          <label className="readings-field readings-filter-page-size">
             <span>Rows/page</span>
             <select value={pageSize} onChange={(event) => setPageSize(event.target.value)}>
               <option value="10">10</option>
@@ -700,7 +701,7 @@ export default function ReadingsScreen({ selectedTableMode = CHLORINATION }) {
             </select>
           </label>
 
-          <div className="readings-actions full">
+          <div className="readings-actions readings-filter-actions">
             <button type="button" className="load-button" disabled={loading} onClick={() => loadHistory()}>
               <RefreshCw size={17} className={loading ? 'spin' : ''} />
               {loading ? 'Loading...' : 'Load'}
@@ -739,7 +740,11 @@ export default function ReadingsScreen({ selectedTableMode = CHLORINATION }) {
                 <tbody>
                   {visibleDailyAverageRows.length ? (
                     visibleDailyAverageRows.map((row) => (
-                      <tr key={row.id}>
+                      <tr
+                        className={selectedTableRow === `average-${row.id}` ? 'selected-table-row' : undefined}
+                        key={row.id}
+                        onClick={() => setSelectedTableRow(`average-${row.id}`)}
+                      >
                         {dailyAverageColumns.map((column) => (
                           <td key={column.key}>{column.render(row)}</td>
                         ))}
@@ -773,14 +778,24 @@ export default function ReadingsScreen({ selectedTableMode = CHLORINATION }) {
               </thead>
               <tbody>
                 {visibleItems.length ? (
-                  visibleItems.map((row) => (
-                    <tr key={`${row.site_type}-${row.id}`}>
+                  visibleItems.map((row) => {
+                    const rowKey = `${row.site_type}-${row.id}`;
+
+                    return (
+                    <tr
+                      className={selectedTableRow === rowKey ? 'selected-table-row' : undefined}
+                      key={rowKey}
+                      onClick={() => setSelectedTableRow(rowKey)}
+                    >
                       <td>
                         <button
                           type="button"
                           className="table-icon-button"
                           aria-label="View reading details"
-                          onClick={() => setSelectedReading(row)}
+                          onClick={() => {
+                            setSelectedTableRow(rowKey);
+                            setSelectedReading(row);
+                          }}
                         >
                           <Eye size={16} />
                         </button>
@@ -789,7 +804,8 @@ export default function ReadingsScreen({ selectedTableMode = CHLORINATION }) {
                         <td key={column.key}>{column.render(row)}</td>
                       ))}
                     </tr>
-                  ))
+                    );
+                  })
                 ) : (
                   <tr>
                     <td colSpan={activeColumns.length + 1}>No readings found.</td>

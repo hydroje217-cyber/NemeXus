@@ -724,9 +724,17 @@ function OperatorsPanel({ operators, panelRef }) {
                     </div>
                   </div>
 
-                  <p>Role: {operator.role || 'operator'}</p>
-                  <p>Status: {status}</p>
-                  <p>Approved: {operator.approved_at ? formatDateTime(operator.approved_at) : 'Not approved yet'}</p>
+                  <div className="operator-detail-row">
+                    <span>
+                      <strong>Role:</strong> {operator.role || 'operator'}
+                    </span>
+                    <span>
+                      <strong>Status:</strong> {status}
+                    </span>
+                    <span>
+                      <strong>Approved:</strong> {operator.approved_at ? formatDateTime(operator.approved_at) : 'Not approved yet'}
+                    </span>
+                  </div>
                 </article>
               );
             })}

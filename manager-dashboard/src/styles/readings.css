@@ -62,9 +62,17 @@
 
 .readings-form-grid {
   display: grid;
-  grid-template-columns: minmax(320px, 1.2fr) repeat(3, minmax(150px, 0.7fr)) minmax(220px, 1fr);
+  grid-template-columns:
+    minmax(250px, 1.35fr)
+    repeat(2, minmax(145px, 0.8fr))
+    minmax(98px, 0.3fr)
+    minmax(160px, 0.95fr)
+    minmax(145px, 0.8fr)
+    minmax(180px, 1fr)
+    minmax(110px, 0.55fr)
+    minmax(210px, 1.05fr);
   align-items: end;
-  gap: 5px;
+  gap: 8px;
 }
 
 .readings-field {
@@ -76,9 +84,20 @@
   grid-column: auto;
 }
 
+.readings-filter-toggle,
+.readings-filter-date,
+.readings-filter-limit,
+.readings-filter-site,
+.readings-filter-status,
+.readings-filter-search,
+.readings-filter-page-size,
+.readings-filter-actions {
+  min-width: 0;
+}
+
 .readings-field > span {
   color: #2f3f4c;
-  font-size: 0.82rem;
+  font-size: 0.72rem;
   font-weight: 900;
   letter-spacing: 0;
   text-transform: uppercase;
@@ -122,12 +141,17 @@
   border: 0;
   background: transparent;
   padding: 0;
+  font-size: 0.9rem;
+}
+
+.readings-field select {
+  font-size: 0.9rem;
 }
 
 .readings-actions {
   display: grid;
   grid-template-columns: minmax(120px, 0.75fr) minmax(180px, 1fr);
-  gap: 10px;
+  gap: 8px;
 }
 
 .load-button {
@@ -187,7 +211,7 @@
 .readings-table-toggle {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 10px;
+  gap: 6px;
 }
 
 .readings-table-toggle.in-filters {
@@ -199,12 +223,12 @@
 .readings-table-toggle button {
   min-height: 48px;
   min-width: 0;
-  padding: 0 14px;
+  padding: 0 10px;
   background: #ffffff;
   border: 1px solid #b8ccd5;
   border-radius: 8px;
   color: #314351;
-  font-size: 0.9rem;
+  font-size: clamp(0.72rem, 0.68rem + 0.16vw, 0.82rem);
   white-space: nowrap;
   align-items: center;
   justify-content: center;
@@ -264,6 +288,13 @@
 
 .readings-table-wrap tr:nth-child(even) td {
   background: #f7fbfc;
+}
+
+.readings-table-wrap tr.selected-table-row td,
+.readings-table-wrap tr.selected-table-row:nth-child(even) td {
+  background: #d7f3ef;
+  border-bottom-color: #9bd9d1;
+  color: #102236;
 }
 
 .readings-table-wrap td {

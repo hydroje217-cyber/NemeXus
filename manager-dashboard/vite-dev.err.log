@@ -1,0 +1,8 @@
+[2m9:22:22 AM[22m [31m[1m[vite][22m[39m [31mInternal server error: EBUSY: resource busy or locked, open 'C:\Users\jehyd\NemeXus\manager-dashboard\src\screens\ReadingsScreen.jsx'[39m
+      at async open (node:internal/fs/promises:640:25)
+      at async Object.readFile (node:internal/fs/promises:1287:14)
+      at async loadAndTransform (file:///C:/Users/jehyd/NemeXus/manager-dashboard/node_modules/vite/dist/node/chunks/config.js:22633:12)
+[2m9:22:22 AM[22m [31m[1m[vite][22m[39m [31mInternal server error: EBUSY: resource busy or locked, open 'C:\Users\jehyd\NemeXus\manager-dashboard\src\screens\ReadingsScreen.jsx'[39m
+      at async open (node:internal/fs/promises:640:25)
+      at async Object.readFile (node:internal/fs/promises:1287:14)
+      at async loadAndTransform (file:///C:/Users/jehyd/NemeXus/manager-dashboard/node_modules/vite/dist/node/chunks/config.js:22633:12)
