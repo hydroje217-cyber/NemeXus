@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { ActivityIndicator, Modal, Pressable, StyleSheet, Text, View, useWindowDimensions } from 'react-native';
+import { ActivityIndicator, Modal, Pressable, ScrollView, StyleSheet, Text, View, useWindowDimensions } from 'react-native';
 import Ionicons from '@expo/vector-icons/Ionicons';
 import LottieView from 'lottie-react-native';
 import Card from '../components/Card';
@@ -48,6 +48,31 @@ const SHIFT_FILTERS = [
   { key: 'b', label: 'B-Shift' },
   { key: 'c', label: 'C-Shift' },
 ];
+const CHLORINATION_READING_FIELDS = [
+  { key: 'totalizer', label: 'Totalizer' },
+  { key: 'pressure_psi', label: 'Pressure', unit: 'psi' },
+  { key: 'rc_ppm', label: 'RC', unit: 'ppm' },
+  { key: 'turbidity_ntu', label: 'Turbidity', unit: 'NTU' },
+  { key: 'ph', label: 'pH' },
+  { key: 'tds_ppm', label: 'TDS', unit: 'ppm' },
+  { key: 'tank_level_liters', label: 'Tank level', unit: 'liters' },
+  { key: 'flowrate_m3hr', label: 'Flowrate', unit: 'm3/hr' },
+  { key: 'chlorine_consumed', label: 'Chlorine used', unit: 'kg' },
+  { key: 'peroxide_consumption', label: 'Peroxide used' },
+  { key: 'chlorination_power_kwh', label: 'Power used', unit: 'kWh' },
+];
+const DEEPWELL_READING_FIELDS = [
+  { key: 'upstream_pressure_psi', label: 'Upstream pressure', unit: 'psi' },
+  { key: 'downstream_pressure_psi', label: 'Downstream pressure', unit: 'psi' },
+  { key: 'flowrate_m3hr', label: 'Flowrate', unit: 'm3/hr' },
+  { key: 'vfd_frequency_hz', label: 'VFD frequency', unit: 'Hz' },
+  { key: 'voltage_l1_v', label: 'Voltage L1', unit: 'V' },
+  { key: 'voltage_l2_v', label: 'Voltage L2', unit: 'V' },
+  { key: 'voltage_l3_v', label: 'Voltage L3', unit: 'V' },
+  { key: 'amperage_a', label: 'Amperage', unit: 'A' },
+  { key: 'tds_ppm', label: 'TDS', unit: 'ppm' },
+  { key: 'power_kwh_shift', label: 'Shift power', unit: 'kWh' },
+];
 
 function formatMaybeTimestamp(value) {
   if (!value) {
@@ -56,6 +81,29 @@ function formatMaybeTimestamp(value) {
 
   const parsed = new Date(value);
   return Number.isNaN(parsed.getTime()) ? value : formatTimestamp(parsed);
+}
+
+function formatRecordedValue(value, unit) {
+  if (value === null || value === undefined || value === '') {
+    return '-';
+  }
+
+  return unit ? `${value} ${unit}` : String(value);
+}
+
+function getRecordedValueRows(reading) {
+  if (!reading) {
+    return [];
+  }
+
+  const readingType = String(reading.site_type || reading.site?.type || '').toLowerCase();
+  const fields = readingType === 'deepwell' ? DEEPWELL_READING_FIELDS : CHLORINATION_READING_FIELDS;
+  return fields
+    .filter(({ key }) => reading[key] !== null && reading[key] !== undefined && reading[key] !== '')
+    .map((field) => ({
+      label: field.label,
+      value: formatRecordedValue(reading[field.key], field.unit),
+    }));
 }
 
 function createSlotTime(minutes, baseDate = new Date(), dayOffset = 0) {
@@ -100,10 +148,17 @@ function getCheckpointStatus(window, reading, now) {
 
 function getWindowDayOffset(window, now = new Date()) {
   const currentMinutes = getMinutesSinceMidnight(now);
-  const isAfterMidnightCShift = currentMinutes < 7 * 60;
-  const isPreviousNightSlot = getShiftKeyForMinutes(window.startMinutes) === 'c' && window.startMinutes >= 23 * 60;
+  const isCShiftSlot = getShiftKeyForMinutes(window.startMinutes) === 'c';
+  const isLateNightCShift = currentMinutes >= 23 * 60;
+  const isBeforeTonightCShift = currentMinutes < 23 * 60;
+  const isEarlyMorningSlot = isCShiftSlot && window.startMinutes < 7 * 60;
+  const isPreviousNightSlot = isCShiftSlot && window.startMinutes >= 23 * 60;
 
-  return isAfterMidnightCShift && isPreviousNightSlot ? -1 : 0;
+  if (isLateNightCShift && isEarlyMorningSlot) {
+    return 1;
+  }
+
+  return isBeforeTonightCShift && isPreviousNightSlot ? -1 : 0;
 }
 
 function buildSlotTimeline({ sites = [], readings = [], typeFilter = 'all', now = new Date() }) {
@@ -395,6 +450,7 @@ export default function OfficeDashboardScreen({ navigation }) {
   const [tone, setTone] = useState('info');
   const [currentTime, setCurrentTime] = useState(() => new Date());
   const [shiftFilter, setShiftFilter] = useState('current');
+  const [selectedCheckpoint, setSelectedCheckpoint] = useState(null);
 
   const sections = useMemo(() => {
     if (!isAdmin) {
@@ -925,13 +981,23 @@ export default function OfficeDashboardScreen({ navigation }) {
                       <View style={styles.timelineCheckpointGrid}>
                         {slot.checkpoints.map((checkpoint) => {
                           const checkpointMeta = statusMeta[checkpoint.status] || statusMeta.upcoming;
+                          const canOpenReading = Boolean(checkpoint.reading);
                           const submitter =
                             checkpoint.reading?.submitted_profile?.full_name ||
                             checkpoint.reading?.submitted_profile?.email ||
                             '';
 
                           return (
-                            <View key={checkpoint.id} style={styles.timelineCheckpoint}>
+                            <Pressable
+                              key={checkpoint.id}
+                              disabled={!canOpenReading}
+                              onPress={() => setSelectedCheckpoint({ ...checkpoint, slot })}
+                              style={({ pressed }) => [
+                                styles.timelineCheckpoint,
+                                canOpenReading && styles.timelineCheckpointPressable,
+                                pressed && canOpenReading ? styles.timelineCheckpointPressed : null,
+                              ]}
+                            >
                               <View style={[styles.timelineCheckpointIcon, checkpointMeta.style]}>
                                 <Ionicons name={checkpointMeta.iconName} size={12} color={palette.onAccent} />
                               </View>
@@ -945,7 +1011,10 @@ export default function OfficeDashboardScreen({ navigation }) {
                                     : checkpointMeta.label}
                                 </Text>
                               </View>
-                            </View>
+                              {canOpenReading ? (
+                                <Ionicons name="eye-outline" size={14} color={palette.ink500} />
+                              ) : null}
+                            </Pressable>
                           );
                         })}
                       </View>
@@ -959,6 +1028,76 @@ export default function OfficeDashboardScreen({ navigation }) {
           )}
         </Card>
       </View>
+    );
+  }
+
+  function renderRecordedValuesModal() {
+    const reading = selectedCheckpoint?.reading;
+    const valueRows = getRecordedValueRows(reading);
+    const submitter =
+      reading?.submitted_profile?.full_name ||
+      reading?.submitted_profile?.email ||
+      '-';
+
+    return (
+      <Modal
+        visible={Boolean(reading)}
+        transparent
+        animationType="fade"
+        statusBarTranslucent
+        onRequestClose={() => setSelectedCheckpoint(null)}
+      >
+        <View style={styles.recordedValuesOverlay}>
+          <Pressable style={styles.recordedValuesBackdrop} onPress={() => setSelectedCheckpoint(null)} />
+          <View style={styles.recordedValuesSheet}>
+            <View style={styles.recordedValuesHeader}>
+              <View style={styles.recordedValuesTitleWrap}>
+                <Text style={styles.recordedValuesEyebrow}>{reading?.site_type || reading?.site?.type || 'Reading'}</Text>
+                <Text style={styles.recordedValuesTitle} numberOfLines={2}>
+                  {selectedCheckpoint?.site?.name || reading?.site?.name || 'Recorded values'}
+                </Text>
+                <Text style={styles.recordedValuesMeta}>
+                  {selectedCheckpoint?.slot?.timeLabel || formatMaybeTimestamp(reading?.slot_datetime)}
+                </Text>
+              </View>
+              <Pressable onPress={() => setSelectedCheckpoint(null)} style={styles.recordedValuesClose}>
+                <Ionicons name="close" size={18} color={palette.ink700} />
+              </Pressable>
+            </View>
+
+            <View style={styles.recordedValuesMetaGrid}>
+              <View style={styles.recordedValuesMetaTile}>
+                <Text style={styles.recordedValuesMetaLabel}>Submitted by</Text>
+                <Text style={styles.recordedValuesMetaValue} numberOfLines={2}>{submitter}</Text>
+              </View>
+              <View style={styles.recordedValuesMetaTile}>
+                <Text style={styles.recordedValuesMetaLabel}>Saved</Text>
+                <Text style={styles.recordedValuesMetaValue}>{formatMaybeTimestamp(reading?.created_at)}</Text>
+              </View>
+            </View>
+
+            <ScrollView style={styles.recordedValuesScroll} contentContainerStyle={styles.recordedValuesList}>
+              {valueRows.length ? (
+                valueRows.map((row) => (
+                  <View key={row.label} style={styles.recordedValueRow}>
+                    <Text style={styles.recordedValueLabel}>{row.label}</Text>
+                    <Text style={styles.recordedValueValue}>{row.value}</Text>
+                  </View>
+                ))
+              ) : (
+                <MessageBanner tone="info">No numeric values were saved for this reading.</MessageBanner>
+              )}
+
+              {reading?.remarks ? (
+                <View style={styles.recordedRemarks}>
+                  <Text style={styles.recordedValueLabel}>Remarks</Text>
+                  <Text style={styles.recordedRemarksText}>{reading.remarks}</Text>
+                </View>
+              ) : null}
+            </ScrollView>
+          </View>
+        </View>
+      </Modal>
     );
   }
 
@@ -1263,6 +1402,8 @@ export default function OfficeDashboardScreen({ navigation }) {
           : 'This office account can review readings only.'
       }
     >
+      {renderRecordedValuesModal()}
+
       <Modal
         visible={showApprovalAnimation}
         transparent
@@ -1383,6 +1524,142 @@ function createStyles(palette, isDark) {
   approvalAnimation: {
     width: 190,
     height: 190,
+  },
+  recordedValuesOverlay: {
+    flex: 1,
+    justifyContent: 'center',
+    padding: 18,
+  },
+  recordedValuesBackdrop: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: isDark ? 'rgba(3,10,17,0.78)' : 'rgba(17,35,59,0.44)',
+  },
+  recordedValuesSheet: {
+    maxHeight: '82%',
+    borderRadius: 18,
+    borderWidth: 1,
+    borderColor: isDark ? '#27445E' : '#D8E6F5',
+    backgroundColor: isDark ? '#07131F' : '#FFFFFF',
+    padding: 14,
+    shadowColor: isDark ? '#000000' : '#0F172A',
+    shadowOpacity: isDark ? 0.28 : 0.16,
+    shadowRadius: 20,
+    shadowOffset: { width: 0, height: 12 },
+    elevation: 8,
+  },
+  recordedValuesHeader: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    justifyContent: 'space-between',
+    gap: 12,
+  },
+  recordedValuesTitleWrap: {
+    flex: 1,
+    minWidth: 0,
+  },
+  recordedValuesEyebrow: {
+    color: palette.teal600,
+    fontSize: 10,
+    fontWeight: '900',
+    textTransform: 'uppercase',
+    letterSpacing: 0.4,
+  },
+  recordedValuesTitle: {
+    marginTop: 4,
+    color: palette.ink900,
+    fontSize: 18,
+    fontWeight: '900',
+  },
+  recordedValuesMeta: {
+    marginTop: 4,
+    color: palette.ink500,
+    fontSize: 11,
+    fontWeight: '700',
+  },
+  recordedValuesClose: {
+    width: 32,
+    height: 32,
+    borderRadius: 999,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
+    borderColor: palette.line,
+    backgroundColor: isDark ? '#132536' : '#F4F8FC',
+  },
+  recordedValuesMetaGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+    marginTop: 12,
+  },
+  recordedValuesMetaTile: {
+    flexGrow: 1,
+    flexBasis: '48%',
+    minWidth: 132,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: palette.line,
+    backgroundColor: isDark ? '#102131' : '#F7FBFF',
+    padding: 9,
+  },
+  recordedValuesMetaLabel: {
+    color: palette.ink500,
+    fontSize: 9,
+    fontWeight: '900',
+    textTransform: 'uppercase',
+    letterSpacing: 0.3,
+  },
+  recordedValuesMetaValue: {
+    marginTop: 4,
+    color: palette.ink900,
+    fontSize: 11,
+    fontWeight: '800',
+  },
+  recordedValuesScroll: {
+    marginTop: 12,
+  },
+  recordedValuesList: {
+    gap: 8,
+    paddingBottom: 4,
+  },
+  recordedValueRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 10,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: palette.line,
+    backgroundColor: isDark ? palette.mist : '#FAFDFF',
+    paddingHorizontal: 10,
+    paddingVertical: 9,
+  },
+  recordedValueLabel: {
+    flex: 1,
+    color: palette.ink700,
+    fontSize: 11,
+    fontWeight: '800',
+  },
+  recordedValueValue: {
+    flexShrink: 1,
+    color: palette.ink900,
+    fontSize: 12,
+    fontWeight: '900',
+    textAlign: 'right',
+  },
+  recordedRemarks: {
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: palette.line,
+    backgroundColor: isDark ? '#102131' : '#F7FBFF',
+    padding: 10,
+  },
+  recordedRemarksText: {
+    marginTop: 5,
+    color: palette.ink900,
+    fontSize: 11,
+    lineHeight: 16,
+    fontWeight: '700',
   },
   profileCard: {
     paddingVertical: 10,
@@ -2205,6 +2482,13 @@ function createStyles(palette, isDark) {
     borderColor: palette.line,
     backgroundColor: isDark ? palette.mist : '#FAFDFF',
     padding: 8,
+  },
+  timelineCheckpointPressable: {
+    borderColor: isDark ? '#2F8F72' : '#B9E4D6',
+  },
+  timelineCheckpointPressed: {
+    opacity: 0.82,
+    transform: [{ scale: 0.99 }],
   },
   timelineCheckpointIcon: {
     width: 22,
