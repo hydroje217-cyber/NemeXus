@@ -909,6 +909,14 @@
 
   .readings-field.full,
   .readings-actions.full,
+  .readings-filter-toggle,
+  .readings-filter-date,
+  .readings-filter-limit,
+  .readings-filter-site,
+  .readings-filter-status,
+  .readings-filter-search,
+  .readings-filter-page-size,
+  .readings-filter-actions,
   .readings-table-toggle.in-filters {
     grid-column: auto;
   }

@@ -62,15 +62,7 @@
 
 .readings-form-grid {
   display: grid;
-  grid-template-columns:
-    minmax(250px, 1.35fr)
-    repeat(2, minmax(145px, 0.8fr))
-    minmax(98px, 0.3fr)
-    minmax(160px, 0.95fr)
-    minmax(145px, 0.8fr)
-    minmax(180px, 1fr)
-    minmax(110px, 0.55fr)
-    minmax(210px, 1.05fr);
+  grid-template-columns: repeat(12, minmax(0, 1fr));
   align-items: end;
   gap: 8px;
 }
@@ -93,6 +85,26 @@
 .readings-filter-page-size,
 .readings-filter-actions {
   min-width: 0;
+}
+
+.readings-filter-toggle {
+  grid-column: span 3;
+}
+
+.readings-filter-date,
+.readings-filter-limit,
+.readings-filter-status,
+.readings-filter-page-size {
+  grid-column: span 2;
+}
+
+.readings-filter-site {
+  grid-column: span 3;
+}
+
+.readings-filter-search,
+.readings-filter-actions {
+  grid-column: span 4;
 }
 
 .readings-field > span {
