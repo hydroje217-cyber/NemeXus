@@ -2,6 +2,11 @@ import { Platform, Share } from 'react-native';
 import * as FileSystem from 'expo-file-system/legacy';
 import * as Sharing from 'expo-sharing';
 
+// Expo SDK 54/55 can reject Storage Access Framework writes on Android with a
+// native NoClassDefFoundError after the user grants folder access. Route Android
+// exports through the share sheet instead so export never fails after permission.
+const ANDROID_STORAGE_ACCESS_FRAMEWORK_EXPORTS_ENABLED = false;
+
 function getContentEncoding({ base64Content, textContent }) {
   if (typeof base64Content === 'string') {
     return {
@@ -39,6 +44,7 @@ async function saveWithAndroidStorageAccess({ fileName, mimeType, base64Content,
   const storageAccess = FileSystem.StorageAccessFramework;
 
   if (
+    !ANDROID_STORAGE_ACCESS_FRAMEWORK_EXPORTS_ENABLED ||
     Platform.OS !== 'android' ||
     !storageAccess?.requestDirectoryPermissionsAsync ||
     !storageAccess?.createFileAsync ||
@@ -117,5 +123,5 @@ export function buildNativeExportSuccessMessage(format, result) {
     return `${format.toUpperCase()} export was saved to the folder you selected.`;
   }
 
-  return `${format.toUpperCase()} export is ready.`;
+  return `${format.toUpperCase()} export is ready. Choose a destination from the share sheet to save it.`;
 }
