@@ -74,16 +74,22 @@ export async function saveNativeExportFile({
   textContent,
   localUri,
 }) {
-  const savedUri = await saveWithAndroidStorageAccess({
-    fileName,
-    mimeType,
-    base64Content,
-    textContent,
-    localUri,
-  });
+  let storageAccessError = null;
 
-  if (savedUri) {
-    return { action: 'saved', uri: savedUri };
+  try {
+    const savedUri = await saveWithAndroidStorageAccess({
+      fileName,
+      mimeType,
+      base64Content,
+      textContent,
+      localUri,
+    });
+
+    if (savedUri) {
+      return { action: 'saved', uri: savedUri };
+    }
+  } catch (error) {
+    storageAccessError = error;
   }
 
   const fileUri = localUri || await writeTemporaryExportFile({ fileName, base64Content, textContent });
@@ -94,7 +100,7 @@ export async function saveNativeExportFile({
       dialogTitle,
       UTI: uti,
     });
-    return { action: 'shared', uri: fileUri };
+    return { action: 'shared', uri: fileUri, storageAccessError };
   }
 
   await Share.share({
@@ -103,7 +109,7 @@ export async function saveNativeExportFile({
     url: fileUri,
   });
 
-  return { action: 'shared', uri: fileUri };
+  return { action: 'shared', uri: fileUri, storageAccessError };
 }
 
 export function buildNativeExportSuccessMessage(format, result) {
