@@ -1,9 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { ActivityIndicator, Animated, Platform, Pressable, Share, StyleSheet, Text, View, useWindowDimensions } from 'react-native';
+import { ActivityIndicator, Animated, Platform, Pressable, StyleSheet, Text, View, useWindowDimensions } from 'react-native';
 import Ionicons from '@expo/vector-icons/Ionicons';
-import * as FileSystem from 'expo-file-system/legacy';
 import * as Print from 'expo-print';
-import * as Sharing from 'expo-sharing';
 import * as XLSX from 'xlsx';
 import { BarChart } from 'react-native-gifted-charts';
 import Card from '../components/Card';
@@ -12,6 +10,7 @@ import ScreenShell from '../components/ScreenShell';
 import { useAuth } from '../context/AuthContext';
 import { useTheme } from '../context/ThemeContext';
 import { getOfficeDashboardSnapshot } from '../services/office';
+import { saveNativeExportFile, buildNativeExportSuccessMessage } from '../utils/exportFiles';
 
 function formatNumber(value, decimals = 2) {
   const parsed = Number(value);
@@ -1305,6 +1304,8 @@ export default function OfficeGraphsScreen({ navigation }) {
     setMessage(`Preparing ${format.toUpperCase()} export...`);
 
     try {
+      let exportResult = null;
+
       if (format === 'xlsx') {
         const workbook = XLSX.utils.book_new();
         sections.forEach((section) => {
@@ -1329,31 +1330,14 @@ export default function OfficeGraphsScreen({ navigation }) {
           document.body.removeChild(link);
           URL.revokeObjectURL(url);
         } else {
-          const exportDirectory = FileSystem.documentDirectory || FileSystem.cacheDirectory;
-
-          if (!exportDirectory) {
-            throw new Error('No writable device directory is available for Excel export.');
-          }
-
-          const fileUri = `${exportDirectory}${fileName}`;
-          const workbookBase64 = XLSX.write(workbook, { bookType: 'xlsx', type: 'base64' });
-          await FileSystem.writeAsStringAsync(fileUri, workbookBase64, {
-            encoding: FileSystem.EncodingType.Base64,
+          exportResult = await saveNativeExportFile({
+            fileName,
+            mimeType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+            dialogTitle: 'Export monthly analytics Excel file',
+            uti: 'org.openxmlformats.spreadsheetml.sheet',
+            base64Content: XLSX.write(workbook, { bookType: 'xlsx', type: 'base64' }),
+            shareMessage: 'Monthly analytics Excel export is ready.',
           });
-
-          if (await Sharing.isAvailableAsync()) {
-            await Sharing.shareAsync(fileUri, {
-              mimeType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-              dialogTitle: 'Export monthly analytics Excel file',
-              UTI: 'org.openxmlformats.spreadsheetml.sheet',
-            });
-          } else {
-            await Share.share({
-              message: `Monthly analytics Excel file saved to ${fileUri}`,
-              title: fileName,
-              url: fileUri,
-            });
-          }
         }
       } else {
         const fileName = buildExportFileName('pdf');
@@ -1376,24 +1360,19 @@ export default function OfficeGraphsScreen({ navigation }) {
             base64: false,
           });
 
-          if (await Sharing.isAvailableAsync()) {
-            await Sharing.shareAsync(fileUri, {
-              mimeType: 'application/pdf',
-              dialogTitle: 'Export monthly analytics PDF',
-              UTI: 'com.adobe.pdf',
-            });
-          } else {
-            await Share.share({
-              message: `Monthly analytics PDF saved to ${fileUri}`,
-              title: fileName,
-              url: fileUri,
-            });
-          }
+          exportResult = await saveNativeExportFile({
+            fileName,
+            mimeType: 'application/pdf',
+            dialogTitle: 'Export monthly analytics PDF',
+            uti: 'com.adobe.pdf',
+            localUri: fileUri,
+            shareMessage: 'Monthly analytics PDF export is ready.',
+          });
         }
       }
 
       setTone('success');
-      setMessage(`${format.toUpperCase()} export is ready.`);
+      setMessage(buildNativeExportSuccessMessage(format, exportResult));
     } catch (error) {
       setTone('error');
       setMessage(error.message || `Failed to export ${format.toUpperCase()}.`);
