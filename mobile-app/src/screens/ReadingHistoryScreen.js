@@ -2,7 +2,6 @@ import { useContext, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Platform,
-  Share,
   ScrollView,
   TextInput,
   Pressable,
@@ -13,9 +12,7 @@ import {
 } from 'react-native';
 import Ionicons from '@expo/vector-icons/Ionicons';
 import DateTimePicker from '@react-native-community/datetimepicker';
-import * as FileSystem from 'expo-file-system/legacy';
 import * as Print from 'expo-print';
-import * as Sharing from 'expo-sharing';
 import * as XLSX from 'xlsx';
 import Card from '../components/Card';
 import MessageBanner from '../components/MessageBanner';
@@ -24,6 +21,7 @@ import ScreenShell, { KeyboardScrollContext } from '../components/ScreenShell';
 import { useAuth } from '../context/AuthContext';
 import { useTheme } from '../context/ThemeContext';
 import { listReadings } from '../services/readings';
+import { saveNativeExportFile, buildNativeExportSuccessMessage } from '../utils/exportFiles';
 import { aggregateDailyRows } from '../utils/production';
 
 const DEFAULT_HISTORY_LIMIT = 50;
@@ -1138,6 +1136,7 @@ export default function ReadingHistoryScreen({ navigation, site, source }) {
     setExporting(true);
 
     try {
+      let exportResult = null;
       const includeAverages = (tableMode === 'CHLORINATION' || tableMode === 'DEEPWELL') && dailyAverageRows.length;
 
       if (exportFormat === 'xlsx') {
@@ -1169,31 +1168,14 @@ export default function ReadingHistoryScreen({ navigation, site, source }) {
           document.body.removeChild(link);
           URL.revokeObjectURL(url);
         } else {
-          const exportDirectory = FileSystem.documentDirectory || FileSystem.cacheDirectory;
-
-          if (!exportDirectory) {
-            throw new Error('No writable device directory is available for Excel export.');
-          }
-
-          const fileUri = `${exportDirectory}${fileName}`;
-          const workbookBase64 = XLSX.write(workbook, { bookType: 'xlsx', type: 'base64' });
-          await FileSystem.writeAsStringAsync(fileUri, workbookBase64, {
-            encoding: FileSystem.EncodingType.Base64,
+          exportResult = await saveNativeExportFile({
+            fileName,
+            mimeType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+            dialogTitle: 'Export reading history Excel file',
+            uti: 'org.openxmlformats.spreadsheetml.sheet',
+            base64Content: XLSX.write(workbook, { bookType: 'xlsx', type: 'base64' }),
+            shareMessage: 'Reading history Excel export is ready.',
           });
-
-          if (await Sharing.isAvailableAsync()) {
-            await Sharing.shareAsync(fileUri, {
-              mimeType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-              dialogTitle: 'Export reading history Excel file',
-              UTI: 'org.openxmlformats.spreadsheetml.sheet',
-            });
-          } else {
-            await Share.share({
-              message: `Reading history Excel file saved to ${fileUri}`,
-              title: fileName,
-              url: fileUri,
-            });
-          }
         }
       } else if (exportFormat === 'pdf') {
         const fileName = buildExportFileName(tableMode, site?.name, 'pdf');
@@ -1224,19 +1206,14 @@ export default function ReadingHistoryScreen({ navigation, site, source }) {
             base64: false,
           });
 
-          if (await Sharing.isAvailableAsync()) {
-            await Sharing.shareAsync(fileUri, {
-              mimeType: 'application/pdf',
-              dialogTitle: 'Export reading history PDF',
-              UTI: 'com.adobe.pdf',
-            });
-          } else {
-            await Share.share({
-              message: `Reading history PDF saved to ${fileUri}`,
-              title: fileName,
-              url: fileUri,
-            });
-          }
+          exportResult = await saveNativeExportFile({
+            fileName,
+            mimeType: 'application/pdf',
+            dialogTitle: 'Export reading history PDF',
+            uti: 'com.adobe.pdf',
+            localUri: fileUri,
+            shareMessage: 'Reading history PDF export is ready.',
+          });
         }
       } else {
         const sections = [];
@@ -1263,34 +1240,18 @@ export default function ReadingHistoryScreen({ navigation, site, source }) {
           document.body.removeChild(link);
           URL.revokeObjectURL(url);
         } else {
-          const exportDirectory = FileSystem.documentDirectory || FileSystem.cacheDirectory;
-
-          if (!exportDirectory) {
-            throw new Error('No writable device directory is available for CSV export.');
-          }
-
-          const fileUri = `${exportDirectory}${fileName}`;
-          await FileSystem.writeAsStringAsync(fileUri, csvContent, {
-            encoding: FileSystem.EncodingType.UTF8,
+          exportResult = await saveNativeExportFile({
+            fileName,
+            mimeType: 'text/csv',
+            dialogTitle: 'Export reading history CSV',
+            uti: 'public.comma-separated-values-text',
+            textContent: csvContent,
+            shareMessage: 'Reading history CSV export is ready.',
           });
-
-          if (await Sharing.isAvailableAsync()) {
-            await Sharing.shareAsync(fileUri, {
-              mimeType: 'text/csv',
-              dialogTitle: 'Export reading history CSV',
-              UTI: 'public.comma-separated-values-text',
-            });
-          } else {
-            await Share.share({
-              message: `Reading history CSV saved to ${fileUri}`,
-              title: fileName,
-              url: fileUri,
-            });
-          }
         }
       }
 
-      setMessage(`${exportFormat.toUpperCase()} export is ready.`);
+      setMessage(buildNativeExportSuccessMessage(exportFormat, exportResult));
     } catch (error) {
       setMessage(error.message || `Failed to export ${exportFormat.toUpperCase()}.`);
     } finally {
