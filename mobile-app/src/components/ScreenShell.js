@@ -1,8 +1,9 @@
 import { createContext, useMemo, useRef } from 'react';
-import { Pressable, ScrollView, StyleSheet, Text, View, Platform, findNodeHandle } from 'react-native';
+import { Pressable, ScrollView, StyleSheet, Text, View, Platform, findNodeHandle, useWindowDimensions } from 'react-native';
 import { KeyboardAwareScrollView } from 'react-native-keyboard-aware-scroll-view';
 import Ionicons from '@expo/vector-icons/Ionicons';
 import { useTheme } from '../context/ThemeContext';
+import { getResponsiveMetrics, scaleStyleDefinitions } from '../theme';
 
 export const KeyboardScrollContext = createContext({
   scrollToField: () => {},
@@ -18,7 +19,9 @@ export default function ScreenShell({
   keyboardAwareProps,
 }) {
   const { palette, isDark, toggleTheme } = useTheme();
-  const styles = useMemo(() => createStyles(palette, isDark), [palette, isDark]);
+  const { width } = useWindowDimensions();
+  const metrics = useMemo(() => getResponsiveMetrics(width), [width]);
+  const styles = useMemo(() => createStyles(palette, isDark, metrics), [palette, isDark, metrics]);
   const keyboardScrollRef = useRef(null);
 
   const keyboardController = useMemo(
@@ -125,8 +128,8 @@ function PressableThemeToggle({ isDark, palette, onPress, styles }) {
   );
 }
 
-function createStyles(palette, isDark) {
-  return StyleSheet.create({
+function createStyles(palette, isDark, metrics) {
+  return StyleSheet.create(scaleStyleDefinitions({
     container: {
       flex: 1,
       backgroundColor: palette.canvas,
@@ -136,10 +139,13 @@ function createStyles(palette, isDark) {
     },
     body: {
       flex: 1,
+      width: '100%',
+      maxWidth: metrics.contentMaxWidth,
+      alignSelf: 'center',
     },
     hero: {
       paddingTop: 10,
-      paddingHorizontal: 16,
+      paddingHorizontal: metrics.contentPadding,
       paddingBottom: 14,
       backgroundColor: palette.navy900,
       borderBottomWidth: 1,
@@ -197,8 +203,10 @@ function createStyles(palette, isDark) {
       fontWeight: '700',
     },
     content: {
-      padding: 16,
-      gap: 14,
+      padding: metrics.contentPadding,
+      gap: metrics.contentGap,
     },
-  });
+  }, metrics, {
+    exclude: ['body.width', 'body.maxWidth', 'body.alignSelf', 'content.padding', 'content.gap', 'hero.paddingHorizontal'],
+  }));
 }

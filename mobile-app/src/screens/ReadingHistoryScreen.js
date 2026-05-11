@@ -21,6 +21,7 @@ import ScreenShell, { KeyboardScrollContext } from '../components/ScreenShell';
 import { useAuth } from '../context/AuthContext';
 import { useTheme } from '../context/ThemeContext';
 import { listReadings } from '../services/readings';
+import { getResponsiveMetrics, scaleStyleDefinitions } from '../theme';
 import { saveNativeExportFile, buildNativeExportSuccessMessage } from '../utils/exportFiles';
 import { aggregateDailyRows } from '../utils/production';
 
@@ -98,7 +99,9 @@ function parseDateValue(value) {
 
 function MobileDateField({ label, value, placeholder, onPress }) {
   const { palette, isDark } = useTheme();
-  const styles = useMemo(() => createStyles(palette, isDark), [palette, isDark]);
+  const { width } = useWindowDimensions();
+  const responsiveMetrics = useMemo(() => getResponsiveMetrics(width), [width]);
+  const styles = useMemo(() => createStyles(palette, isDark, responsiveMetrics), [palette, isDark, responsiveMetrics]);
 
   return (
     <View style={styles.filterField}>
@@ -658,7 +661,9 @@ function formatAverageValue(value) {
 
 function DataTable({ columns, rows, emptyMessage }) {
   const { palette, isDark } = useTheme();
-  const styles = useMemo(() => createStyles(palette, isDark), [palette, isDark]);
+  const { width } = useWindowDimensions();
+  const responsiveMetrics = useMemo(() => getResponsiveMetrics(width), [width]);
+  const styles = useMemo(() => createStyles(palette, isDark, responsiveMetrics), [palette, isDark, responsiveMetrics]);
   const [selectedRowId, setSelectedRowId] = useState('');
 
   if (!rows.length) {
@@ -732,7 +737,9 @@ function DataTable({ columns, rows, emptyMessage }) {
 
 function TableModeChip({ label, active, onPress, iconName }) {
   const { palette, isDark } = useTheme();
-  const styles = useMemo(() => createStyles(palette, isDark), [palette, isDark]);
+  const { width } = useWindowDimensions();
+  const responsiveMetrics = useMemo(() => getResponsiveMetrics(width), [width]);
+  const styles = useMemo(() => createStyles(palette, isDark, responsiveMetrics), [palette, isDark, responsiveMetrics]);
   const iconColor = active ? palette.onAccent : palette.ink700;
 
   return (
@@ -745,7 +752,9 @@ function TableModeChip({ label, active, onPress, iconName }) {
 
 function ExportFormatChip({ label, active, onPress, iconName }) {
   const { palette, isDark } = useTheme();
-  const styles = useMemo(() => createStyles(palette, isDark), [palette, isDark]);
+  const { width } = useWindowDimensions();
+  const responsiveMetrics = useMemo(() => getResponsiveMetrics(width), [width]);
+  const styles = useMemo(() => createStyles(palette, isDark, responsiveMetrics), [palette, isDark, responsiveMetrics]);
   const iconColor = active ? palette.onAccent : palette.ink700;
 
   return (
@@ -758,7 +767,9 @@ function ExportFormatChip({ label, active, onPress, iconName }) {
 
 function ExportActionButton({ format, loading, onExport, onSelectFormat }) {
   const { palette, isDark } = useTheme();
-  const styles = useMemo(() => createStyles(palette, isDark), [palette, isDark]);
+  const { width } = useWindowDimensions();
+  const responsiveMetrics = useMemo(() => getResponsiveMetrics(width), [width]);
+  const styles = useMemo(() => createStyles(palette, isDark, responsiveMetrics), [palette, isDark, responsiveMetrics]);
   const isExcel = format === 'xlsx';
   const isPdf = format === 'pdf';
   const [menuOpen, setMenuOpen] = useState(false);
@@ -867,8 +878,9 @@ function ExportActionButton({ format, loading, onExport, onSelectFormat }) {
 export default function ReadingHistoryScreen({ navigation, site, source }) {
   const { profile } = useAuth();
   const { palette, isDark } = useTheme();
-  const styles = useMemo(() => createStyles(palette, isDark), [palette, isDark]);
   const { width } = useWindowDimensions();
+  const responsiveMetrics = useMemo(() => getResponsiveMetrics(width), [width]);
+  const styles = useMemo(() => createStyles(palette, isDark, responsiveMetrics), [palette, isDark, responsiveMetrics]);
   const isOfficeView = source === 'office-dashboard';
   const isCompactFilters = width < 430;
   const [tableMode, setTableMode] = useState(site?.type || 'CHLORINATION');
@@ -1636,8 +1648,8 @@ export default function ReadingHistoryScreen({ navigation, site, source }) {
   );
 }
 
-function createStyles(palette, isDark) {
-  return StyleSheet.create({
+function createStyles(palette, isDark, responsiveMetrics = getResponsiveMetrics()) {
+  return StyleSheet.create(scaleStyleDefinitions({
     topBackRow: {
       alignItems: 'flex-start',
     },
@@ -2228,5 +2240,13 @@ function createStyles(palette, isDark) {
       borderWidth: 1,
       borderColor: isDark ? '#31506E' : '#C9DDF3',
     },
-  });
+  }, responsiveMetrics, {
+    exclude: [
+      'tableColumn.width',
+      'averageTableColumn.width',
+      'modalBackdrop.flex',
+      'detailModal.maxHeight',
+      'tableCell.flex',
+    ],
+  }));
 }

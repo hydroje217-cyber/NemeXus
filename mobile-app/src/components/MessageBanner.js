@@ -1,10 +1,13 @@
 import { useMemo } from 'react';
-import { StyleSheet, Text, View } from 'react-native';
+import { StyleSheet, Text, View, useWindowDimensions } from 'react-native';
 import { useTheme } from '../context/ThemeContext';
+import { getResponsiveMetrics, scaleStyleDefinitions } from '../theme';
 
 export default function MessageBanner({ tone = 'info', children }) {
   const { palette } = useTheme();
-  const styles = useMemo(() => createStyles(), []);
+  const { width } = useWindowDimensions();
+  const metrics = useMemo(() => getResponsiveMetrics(width), [width]);
+  const styles = useMemo(() => createStyles(metrics), [metrics]);
   const tones = useMemo(
     () => ({
       info: {
@@ -31,8 +34,8 @@ export default function MessageBanner({ tone = 'info', children }) {
   );
 }
 
-function createStyles() {
-  return StyleSheet.create({
+function createStyles(metrics) {
+  return StyleSheet.create(scaleStyleDefinitions({
     banner: {
       borderRadius: 16,
       paddingHorizontal: 14,
@@ -43,5 +46,5 @@ function createStyles() {
       fontWeight: '600',
       lineHeight: 20,
     },
-  });
+  }, metrics));
 }

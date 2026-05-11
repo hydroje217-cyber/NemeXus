@@ -1,13 +1,16 @@
 import { useMemo } from 'react';
-import { StyleSheet, Text } from 'react-native';
+import { StyleSheet, Text, useWindowDimensions } from 'react-native';
 import Card from '../components/Card';
 import ScreenShell from '../components/ScreenShell';
 import { useTheme } from '../context/ThemeContext';
 import { supabaseMissingMessage } from '../lib/supabase';
+import { getResponsiveMetrics, scaleStyleDefinitions } from '../theme';
 
 export default function SetupRequiredScreen() {
   const { palette } = useTheme();
-  const styles = useMemo(() => createStyles(palette), [palette]);
+  const { width } = useWindowDimensions();
+  const responsiveMetrics = useMemo(() => getResponsiveMetrics(width), [width]);
+  const styles = useMemo(() => createStyles(palette, responsiveMetrics), [palette, responsiveMetrics]);
 
   return (
     <ScreenShell
@@ -31,8 +34,8 @@ export default function SetupRequiredScreen() {
   );
 }
 
-function createStyles(palette) {
-  return StyleSheet.create({
+function createStyles(palette, responsiveMetrics) {
+  return StyleSheet.create(scaleStyleDefinitions({
     title: {
       color: palette.ink900,
       fontSize: 18,
@@ -44,5 +47,5 @@ function createStyles(palette) {
       fontSize: 14,
       lineHeight: 20,
     },
-  });
+  }, responsiveMetrics));
 }

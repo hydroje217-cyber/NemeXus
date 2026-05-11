@@ -1,6 +1,7 @@
 import { useMemo } from 'react';
-import { ActivityIndicator, Pressable, StyleSheet, Text, View } from 'react-native';
+import { ActivityIndicator, Pressable, StyleSheet, Text, View, useWindowDimensions } from 'react-native';
 import { useTheme } from '../context/ThemeContext';
+import { getResponsiveMetrics, scaleStyleDefinitions } from '../theme';
 
 export default function PrimaryButton({
   label,
@@ -12,7 +13,9 @@ export default function PrimaryButton({
   labelStyle = null,
 }) {
   const { palette, isDark } = useTheme();
-  const styles = useMemo(() => createStyles(palette, isDark), [palette, isDark]);
+  const { width } = useWindowDimensions();
+  const metrics = useMemo(() => getResponsiveMetrics(width), [width]);
+  const styles = useMemo(() => createStyles(palette, isDark, metrics), [palette, isDark, metrics]);
   const isPrimary = tone === 'primary';
 
   return (
@@ -43,8 +46,8 @@ export default function PrimaryButton({
   );
 }
 
-function createStyles(palette, isDark) {
-  return StyleSheet.create({
+function createStyles(palette, isDark, metrics) {
+  return StyleSheet.create(scaleStyleDefinitions({
     button: {
       minHeight: 52,
       borderRadius: 16,
@@ -92,5 +95,5 @@ function createStyles(palette, isDark) {
     secondaryLabel: {
       color: palette.ink900,
     },
-  });
+  }, metrics, { exclude: ['content.width'] }));
 }

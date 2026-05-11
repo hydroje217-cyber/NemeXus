@@ -10,6 +10,7 @@ import { useAuth } from '../context/AuthContext';
 import { useTheme } from '../context/ThemeContext';
 import { supabase } from '../lib/supabase';
 import { approveOperatorProfile, assignProfileRole, getOfficeDashboardSnapshot } from '../services/office';
+import { getResponsiveMetrics, scaleStyleDefinitions } from '../theme';
 import { formatTimestamp } from '../utils/time';
 
 let styles = StyleSheet.create({});
@@ -402,8 +403,9 @@ function EntityCard({ children, style, accentStyle }) {
 export default function OfficeDashboardScreen({ navigation }) {
   const { profile, signOut } = useAuth();
   const { palette, isDark } = useTheme();
-  styles = useMemo(() => createStyles(palette, isDark), [palette, isDark]);
   const { width } = useWindowDimensions();
+  const responsiveMetrics = useMemo(() => getResponsiveMetrics(width), [width]);
+  styles = useMemo(() => createStyles(palette, isDark, responsiveMetrics), [palette, isDark, responsiveMetrics]);
   const isWide = width >= 980;
   const isAdmin = profile?.role === 'admin';
   const roleChoices = ['operator', 'supervisor', 'manager', 'admin'];
@@ -1497,8 +1499,8 @@ export default function OfficeDashboardScreen({ navigation }) {
   );
 }
 
-function createStyles(palette, isDark) {
-  return StyleSheet.create({
+function createStyles(palette, isDark, responsiveMetrics) {
+  return StyleSheet.create(scaleStyleDefinitions({
   approvalAnimationOverlay: {
     flex: 1,
     alignItems: 'center',
@@ -2557,5 +2559,18 @@ function createStyles(palette, isDark) {
   roleFilterChipTextActive: {
     color: palette.onAccent,
   },
-  });
+  }, responsiveMetrics, {
+    exclude: [
+      'recordedValuesSheet.maxHeight',
+      'recordedValuesMetaTile.flexBasis',
+      'recordedValuesMetaTile.flexGrow',
+      'summaryCard.flex',
+      'summaryCard.minHeight',
+      'entityAccent.left',
+      'entityAccent.right',
+      'timelineLine.flex',
+      'timelineCheckpoint.flexBasis',
+      'timelineCheckpoint.flexGrow',
+    ],
+  }));
 }

@@ -1,5 +1,5 @@
 import { useMemo } from 'react';
-import { StyleSheet, Text, View } from 'react-native';
+import { StyleSheet, Text, View, useWindowDimensions } from 'react-native';
 import Ionicons from '@expo/vector-icons/Ionicons';
 import Card from '../components/Card';
 import MessageBanner from '../components/MessageBanner';
@@ -7,6 +7,7 @@ import PrimaryButton from '../components/PrimaryButton';
 import ScreenShell from '../components/ScreenShell';
 import { useAuth } from '../context/AuthContext';
 import { useTheme } from '../context/ThemeContext';
+import { getResponsiveMetrics, scaleStyleDefinitions } from '../theme';
 
 const approvalSteps = [
   'Sign in to the office dashboard with an office account.',
@@ -18,7 +19,9 @@ const approvalSteps = [
 export default function PendingApprovalScreen() {
   const { profile, signOut, refreshProfile, pendingApprovalMessage } = useAuth();
   const { palette, isDark } = useTheme();
-  const styles = useMemo(() => createStyles(palette, isDark), [palette, isDark]);
+  const { width } = useWindowDimensions();
+  const responsiveMetrics = useMemo(() => getResponsiveMetrics(width), [width]);
+  const styles = useMemo(() => createStyles(palette, isDark, responsiveMetrics), [palette, isDark, responsiveMetrics]);
 
   return (
     <ScreenShell
@@ -88,8 +91,8 @@ export default function PendingApprovalScreen() {
   );
 }
 
-function createStyles(palette, isDark) {
-  return StyleSheet.create({
+function createStyles(palette, isDark, responsiveMetrics) {
+  return StyleSheet.create(scaleStyleDefinitions({
     identityCard: {
       gap: 14,
     },
@@ -202,5 +205,5 @@ function createStyles(palette, isDark) {
     actions: {
       gap: 12,
     },
-  });
+  }, responsiveMetrics));
 }

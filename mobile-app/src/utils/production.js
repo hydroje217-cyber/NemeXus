@@ -31,7 +31,7 @@ export function parseProductionNumber(value) {
     return null;
   }
 
-  const parsed = Number(value);
+  const parsed = typeof value === 'string' ? Number(value.replace(/,/g, '')) : Number(value);
   return Number.isFinite(parsed) ? parsed : null;
 }
 
@@ -160,6 +160,66 @@ export function groupReadingsByDay(items) {
   }, new Map());
 }
 
+export function dayKeyFromSummary(item) {
+  return String(item?.summary_date || item?.date || '').slice(0, 10);
+}
+
+function siteTypeFromSummary(item) {
+  return String(item?.site_type || item?.site?.type || item?.sites?.type || '').toUpperCase();
+}
+
+function filterSummariesBySiteType(summaries, siteType) {
+  return summaries.filter((summary) => siteTypeFromSummary(summary) === siteType);
+}
+
+function isVisibleDate(date, { visibleFromDate, visibleToDate } = {}) {
+  if (!date) {
+    return false;
+  }
+
+  if (visibleFromDate && date < visibleFromDate) {
+    return false;
+  }
+
+  if (visibleToDate && date > visibleToDate) {
+    return false;
+  }
+
+  return true;
+}
+
+function buildDailySummaryMap(summaries, field, options = {}) {
+  return summaries.reduce((map, summary) => {
+    const date = dayKeyFromSummary(summary);
+    const value = parseProductionNumber(summary[field]);
+    if (!isVisibleDate(date, options) || value === null) {
+      return map;
+    }
+
+    map.set(date, (map.get(date) || 0) + value);
+    return map;
+  }, new Map());
+}
+
+function buildDailyAggregateMap(rows, valueKey) {
+  return rows.reduce((map, row) => {
+    const value = parseProductionNumber(row[valueKey]);
+    if (value !== null) {
+      map.set(row.date, value);
+    }
+
+    return map;
+  }, new Map());
+}
+
+function mergeDailyMaps({ liveMap, summaryMap }) {
+  const merged = new Map(summaryMap);
+  liveMap.forEach((value, date) => {
+    merged.set(date, value);
+  });
+  return merged;
+}
+
 export function aggregateDailyRows(items, fieldConfigs, options = {}) {
   const { visibleFromDate, visibleToDate } = options;
   const grouped = groupReadingsByDay(items);
@@ -230,21 +290,14 @@ export function buildDailyTotalizerRows(readings, options = {}) {
 }
 
 export function buildMonthlyProduction(readings, options = {}) {
-  const {
-    now = new Date(),
-    monthCount = DEFAULT_MONTHLY_PRODUCTION_MONTH_COUNT,
-  } = options;
+  const { now = new Date(), monthCount = DEFAULT_MONTHLY_PRODUCTION_MONTH_COUNT, dailySummaries = [] } = options;
   const firstVisibleMonth = new Date(now.getFullYear(), now.getMonth() - monthCount + 1, 1);
   const lastVisibleMonth = new Date(now.getFullYear(), now.getMonth(), 1);
   const visibleFromDate = createDayKey(firstVisibleMonth);
   const visibleToDate = createDayKey(now);
   const rowsByMonth = new Map();
 
-  for (
-    let date = new Date(firstVisibleMonth);
-    date <= lastVisibleMonth;
-    date.setMonth(date.getMonth() + 1)
-  ) {
+  for (let date = new Date(firstVisibleMonth); date <= lastVisibleMonth; date.setMonth(date.getMonth() + 1)) {
     const key = createMonthKey(date);
     rowsByMonth.set(key, {
       key,
@@ -255,13 +308,16 @@ export function buildMonthlyProduction(readings, options = {}) {
     });
   }
 
-  buildDailyTotalizerRows(readings, { visibleFromDate, visibleToDate }).forEach((dailyRow) => {
-    const production = parseProductionNumber(dailyRow.totalizer);
-    if (production === null) {
-      return;
-    }
+  const productionByDate = mergeDailyMaps({
+    liveMap: buildDailyAggregateMap(buildDailyTotalizerRows(readings, { visibleFromDate, visibleToDate }), 'totalizer'),
+    summaryMap: buildDailySummaryMap(filterSummariesBySiteType(dailySummaries, 'CHLORINATION'), 'production_m3', {
+      visibleFromDate,
+      visibleToDate,
+    }),
+  });
 
-    const monthKey = dailyRow.date.slice(0, 7);
+  productionByDate.forEach((production, date) => {
+    const monthKey = date.slice(0, 7);
     const row = rowsByMonth.get(monthKey);
     if (!row) {
       return;
@@ -284,23 +340,22 @@ export function buildMonthlyProduction(readings, options = {}) {
 }
 
 export function buildDailyProduction(readings, options = {}) {
-  const { now = new Date() } = options;
+  const { now = new Date(), dailySummaries = [] } = options;
   const firstVisibleDay = new Date(now.getFullYear(), now.getMonth(), 1);
   const visibleFromDate = createDayKey(firstVisibleDay);
   const visibleToDate = createDayKey(now);
-  const dailyRowsByDate = new Map(
-    buildDailyTotalizerRows(readings, { visibleFromDate, visibleToDate }).map((row) => [row.date, row])
-  );
+  const productionByDate = mergeDailyMaps({
+    liveMap: buildDailyAggregateMap(buildDailyTotalizerRows(readings, { visibleFromDate, visibleToDate }), 'totalizer'),
+    summaryMap: buildDailySummaryMap(filterSummariesBySiteType(dailySummaries, 'CHLORINATION'), 'production_m3', {
+      visibleFromDate,
+      visibleToDate,
+    }),
+  });
   const rows = [];
 
-  for (
-    let date = new Date(firstVisibleDay);
-    date <= now;
-    date.setDate(date.getDate() + 1)
-  ) {
+  for (let date = new Date(firstVisibleDay); date <= now; date.setDate(date.getDate() + 1)) {
     const key = createDayKey(date);
-    const dailyRow = dailyRowsByDate.get(key);
-    const production = parseProductionNumber(dailyRow?.totalizer) ?? 0;
+    const production = parseProductionNumber(productionByDate.get(key)) ?? 0;
 
     rows.push({
       key,
@@ -319,16 +374,62 @@ export function buildDailyProduction(readings, options = {}) {
   };
 }
 
+export function buildDailyPowerConsumption({ chlorinationReadings = [], deepwellReadings = [] } = {}, options = {}) {
+  const { now = new Date(), dailySummaries = [] } = options;
+  const firstVisibleDay = new Date(now.getFullYear(), now.getMonth(), 1);
+  const visibleFromDate = createDayKey(firstVisibleDay);
+  const visibleToDate = createDayKey(now);
+  const summaryOptions = { visibleFromDate, visibleToDate };
+  const chlorinationRowsByDate = mergeDailyMaps({
+    liveMap: buildDailyAggregateMap(
+      aggregateDailyRows(
+        chlorinationReadings,
+        [{ key: 'power', field: 'chlorination_power_kwh', aggregate: 'sum' }],
+        summaryOptions
+      ),
+      'power'
+    ),
+    summaryMap: buildDailySummaryMap(filterSummariesBySiteType(dailySummaries, 'CHLORINATION'), 'power_kwh', summaryOptions),
+  });
+  const deepwellRowsByDate = mergeDailyMaps({
+    liveMap: buildDailyAggregateMap(
+      aggregateDailyRows(deepwellReadings, [{ key: 'power', field: 'power_kwh_shift', aggregate: 'sum' }], summaryOptions),
+      'power'
+    ),
+    summaryMap: buildDailySummaryMap(filterSummariesBySiteType(dailySummaries, 'DEEPWELL'), 'power_kwh', summaryOptions),
+  });
+  const rows = [];
+
+  for (let date = new Date(firstVisibleDay); date <= now; date.setDate(date.getDate() + 1)) {
+    const key = createDayKey(date);
+    const chlorinationPower = parseProductionNumber(chlorinationRowsByDate.get(key)) ?? 0;
+    const deepwellPower = parseProductionNumber(deepwellRowsByDate.get(key)) ?? 0;
+
+    rows.push({
+      key,
+      date: key,
+      label: `${String(date.getMonth() + 1).padStart(2, '0')}/${String(date.getDate()).padStart(2, '0')}`,
+      chlorinationPower,
+      deepwellPower,
+      totalPower: chlorinationPower + deepwellPower,
+    });
+  }
+
+  rows.sort((a, b) => b.key.localeCompare(a.key));
+
+  return {
+    monthLabel: createFullMonthLabel(now),
+    totalPower: rows.reduce((sum, row) => sum + row.totalPower, 0),
+    rows,
+  };
+}
+
 function createMonthlyRows({ now, monthCount }) {
   const firstVisibleMonth = new Date(now.getFullYear(), now.getMonth() - monthCount + 1, 1);
   const lastVisibleMonth = new Date(now.getFullYear(), now.getMonth(), 1);
   const rowsByMonth = new Map();
 
-  for (
-    let date = new Date(firstVisibleMonth);
-    date <= lastVisibleMonth;
-    date.setMonth(date.getMonth() + 1)
-  ) {
+  for (let date = new Date(firstVisibleMonth); date <= lastVisibleMonth; date.setMonth(date.getMonth() + 1)) {
     const key = createMonthKey(date);
     rowsByMonth.set(key, {
       key,
@@ -359,42 +460,54 @@ function addDailyAggregateToMonthlyRows({ rowsByMonth, rows, valueKey, targetKey
   });
 }
 
+function addDailyMapToMonthlyRows({ rowsByMonth, valueByDate, targetKey }) {
+  valueByDate.forEach((value, date) => {
+    const parsed = parseProductionNumber(value);
+    if (parsed === null) {
+      return;
+    }
+
+    const row = rowsByMonth.get(date.slice(0, 7));
+    if (!row) {
+      return;
+    }
+
+    row[targetKey] = (row[targetKey] || 0) + parsed;
+  });
+}
+
 export function buildMonthlyPowerConsumption({ chlorinationReadings = [], deepwellReadings = [] } = {}, options = {}) {
-  const {
-    now = new Date(),
-    monthCount = DEFAULT_MONTHLY_PRODUCTION_MONTH_COUNT,
-  } = options;
+  const { now = new Date(), monthCount = DEFAULT_MONTHLY_PRODUCTION_MONTH_COUNT, dailySummaries = [] } = options;
   const { firstVisibleMonth, rowsByMonth } = createMonthlyRows({ now, monthCount });
   const visibleFromDate = createDayKey(firstVisibleMonth);
   const visibleToDate = createDayKey(now);
-  const chlorinationRows = aggregateDailyRows(
-    chlorinationReadings,
-    [{ key: 'power', field: 'chlorination_power_kwh', aggregate: 'sum' }],
-    { visibleFromDate, visibleToDate }
-  );
-  const deepwellRows = aggregateDailyRows(
-    deepwellReadings,
-    [{ key: 'power', field: 'power_kwh_shift', aggregate: 'sum' }],
-    { visibleFromDate, visibleToDate }
-  );
+  const summaryOptions = { visibleFromDate, visibleToDate };
+  const chlorinationPowerByDate = mergeDailyMaps({
+    liveMap: buildDailyAggregateMap(
+      aggregateDailyRows(
+        chlorinationReadings,
+        [{ key: 'power', field: 'chlorination_power_kwh', aggregate: 'sum' }],
+        summaryOptions
+      ),
+      'power'
+    ),
+    summaryMap: buildDailySummaryMap(filterSummariesBySiteType(dailySummaries, 'CHLORINATION'), 'power_kwh', summaryOptions),
+  });
+  const deepwellPowerByDate = mergeDailyMaps({
+    liveMap: buildDailyAggregateMap(
+      aggregateDailyRows(deepwellReadings, [{ key: 'power', field: 'power_kwh_shift', aggregate: 'sum' }], summaryOptions),
+      'power'
+    ),
+    summaryMap: buildDailySummaryMap(filterSummariesBySiteType(dailySummaries, 'DEEPWELL'), 'power_kwh', summaryOptions),
+  });
 
   rowsByMonth.forEach((row) => {
     row.chlorinationPower = 0;
     row.deepwellPower = 0;
   });
 
-  addDailyAggregateToMonthlyRows({
-    rowsByMonth,
-    rows: chlorinationRows,
-    valueKey: 'power',
-    targetKey: 'chlorinationPower',
-  });
-  addDailyAggregateToMonthlyRows({
-    rowsByMonth,
-    rows: deepwellRows,
-    valueKey: 'power',
-    targetKey: 'deepwellPower',
-  });
+  addDailyMapToMonthlyRows({ rowsByMonth, valueByDate: chlorinationPowerByDate, targetKey: 'chlorinationPower' });
+  addDailyMapToMonthlyRows({ rowsByMonth, valueByDate: deepwellPowerByDate, targetKey: 'deepwellPower' });
 
   const rows = Array.from(rowsByMonth.values())
     .map((row) => ({
@@ -411,39 +524,36 @@ export function buildMonthlyPowerConsumption({ chlorinationReadings = [], deepwe
 }
 
 export function buildMonthlyChemicalUsage(chlorinationReadings = [], options = {}) {
-  const {
-    now = new Date(),
-    monthCount = DEFAULT_MONTHLY_PRODUCTION_MONTH_COUNT,
-  } = options;
+  const { now = new Date(), monthCount = DEFAULT_MONTHLY_PRODUCTION_MONTH_COUNT, dailySummaries = [] } = options;
   const { firstVisibleMonth, rowsByMonth } = createMonthlyRows({ now, monthCount });
   const visibleFromDate = createDayKey(firstVisibleMonth);
   const visibleToDate = createDayKey(now);
+  const summaryOptions = { visibleFromDate, visibleToDate };
+  const chlorinationSummaries = filterSummariesBySiteType(dailySummaries, 'CHLORINATION');
   const chemicalRows = aggregateDailyRows(
     chlorinationReadings,
     [
       { key: 'chlorine', field: 'chlorine_consumed', aggregate: 'sum' },
       { key: 'peroxide', field: 'peroxide_consumption', aggregate: 'sum' },
     ],
-    { visibleFromDate, visibleToDate }
+    summaryOptions
   );
+  const chlorineByDate = mergeDailyMaps({
+    liveMap: buildDailyAggregateMap(chemicalRows, 'chlorine'),
+    summaryMap: buildDailySummaryMap(chlorinationSummaries, 'chlorine_kg', summaryOptions),
+  });
+  const peroxideByDate = mergeDailyMaps({
+    liveMap: buildDailyAggregateMap(chemicalRows, 'peroxide'),
+    summaryMap: buildDailySummaryMap(chlorinationSummaries, 'peroxide_liters', summaryOptions),
+  });
 
   rowsByMonth.forEach((row) => {
     row.chlorineUsage = 0;
     row.peroxideUsage = 0;
   });
 
-  addDailyAggregateToMonthlyRows({
-    rowsByMonth,
-    rows: chemicalRows,
-    valueKey: 'chlorine',
-    targetKey: 'chlorineUsage',
-  });
-  addDailyAggregateToMonthlyRows({
-    rowsByMonth,
-    rows: chemicalRows,
-    valueKey: 'peroxide',
-    targetKey: 'peroxideUsage',
-  });
+  addDailyMapToMonthlyRows({ rowsByMonth, valueByDate: chlorineByDate, targetKey: 'chlorineUsage' });
+  addDailyMapToMonthlyRows({ rowsByMonth, valueByDate: peroxideByDate, targetKey: 'peroxideUsage' });
 
   const rows = Array.from(rowsByMonth.values())
     .map((row) => ({

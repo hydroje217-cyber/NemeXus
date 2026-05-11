@@ -1,11 +1,9 @@
-import { Platform, Share } from 'react-native';
+import { Share } from 'react-native';
 import * as FileSystem from 'expo-file-system/legacy';
 import * as Sharing from 'expo-sharing';
 
-// Expo SDK 54/55 can reject Storage Access Framework writes on Android with a
-// native NoClassDefFoundError after the user grants folder access. Route Android
-// exports through the share sheet instead so export never fails after permission.
-const ANDROID_STORAGE_ACCESS_FRAMEWORK_EXPORTS_ENABLED = false;
+// Android SAF writes can crash when Expo native packages drift out of sync.
+// Keep native exports on the share sheet path, which avoids createSAFFileAsync.
 
 function getContentEncoding({ base64Content, textContent }) {
   if (typeof base64Content === 'string') {
@@ -21,12 +19,6 @@ function getContentEncoding({ base64Content, textContent }) {
   };
 }
 
-async function readLocalFileAsBase64(localUri) {
-  return FileSystem.readAsStringAsync(localUri, {
-    encoding: FileSystem.EncodingType.Base64,
-  });
-}
-
 async function writeTemporaryExportFile({ fileName, base64Content, textContent }) {
   const exportDirectory = FileSystem.documentDirectory || FileSystem.cacheDirectory;
 
@@ -40,36 +32,6 @@ async function writeTemporaryExportFile({ fileName, base64Content, textContent }
   return fileUri;
 }
 
-async function saveWithAndroidStorageAccess({ fileName, mimeType, base64Content, textContent, localUri }) {
-  const storageAccess = FileSystem.StorageAccessFramework;
-
-  if (
-    !ANDROID_STORAGE_ACCESS_FRAMEWORK_EXPORTS_ENABLED ||
-    Platform.OS !== 'android' ||
-    !storageAccess?.requestDirectoryPermissionsAsync ||
-    !storageAccess?.createFileAsync ||
-    !storageAccess?.writeAsStringAsync
-  ) {
-    return null;
-  }
-
-  const permissions = await storageAccess.requestDirectoryPermissionsAsync();
-
-  if (!permissions.granted || !permissions.directoryUri) {
-    return null;
-  }
-
-  const destinationUri = await storageAccess.createFileAsync(permissions.directoryUri, fileName, mimeType);
-  const base64FromLocalFile = localUri ? await readLocalFileAsBase64(localUri) : null;
-  const { contents, encoding } = getContentEncoding({
-    base64Content: base64FromLocalFile || base64Content,
-    textContent,
-  });
-
-  await storageAccess.writeAsStringAsync(destinationUri, contents, { encoding });
-  return destinationUri;
-}
-
 export async function saveNativeExportFile({
   fileName,
   mimeType,
@@ -80,24 +42,6 @@ export async function saveNativeExportFile({
   textContent,
   localUri,
 }) {
-  let storageAccessError = null;
-
-  try {
-    const savedUri = await saveWithAndroidStorageAccess({
-      fileName,
-      mimeType,
-      base64Content,
-      textContent,
-      localUri,
-    });
-
-    if (savedUri) {
-      return { action: 'saved', uri: savedUri };
-    }
-  } catch (error) {
-    storageAccessError = error;
-  }
-
   const fileUri = localUri || await writeTemporaryExportFile({ fileName, base64Content, textContent });
 
   if (await Sharing.isAvailableAsync()) {
@@ -106,7 +50,7 @@ export async function saveNativeExportFile({
       dialogTitle,
       UTI: uti,
     });
-    return { action: 'shared', uri: fileUri, storageAccessError };
+    return { action: 'shared', uri: fileUri };
   }
 
   await Share.share({
@@ -115,7 +59,7 @@ export async function saveNativeExportFile({
     url: fileUri,
   });
 
-  return { action: 'shared', uri: fileUri, storageAccessError };
+  return { action: 'shared', uri: fileUri };
 }
 
 export function buildNativeExportSuccessMessage(format, result) {

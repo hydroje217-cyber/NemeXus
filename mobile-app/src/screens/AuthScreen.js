@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { Pressable, StyleSheet, Text, View, useWindowDimensions } from 'react-native';
 import Ionicons from '@expo/vector-icons/Ionicons';
 import Card from '../components/Card';
 import FormField from '../components/FormField';
@@ -8,11 +8,14 @@ import PrimaryButton from '../components/PrimaryButton';
 import ScreenShell from '../components/ScreenShell';
 import { useAuth } from '../context/AuthContext';
 import { useTheme } from '../context/ThemeContext';
+import { getResponsiveMetrics, scaleStyleDefinitions } from '../theme';
 
 export default function AuthScreen({ initialMessage = '', initialTone = 'info' }) {
   const { signIn, signUp, requestPasswordReset, authMessage } = useAuth();
   const { palette, isDark } = useTheme();
-  const styles = useMemo(() => createStyles(palette, isDark), [palette, isDark]);
+  const { width } = useWindowDimensions();
+  const responsiveMetrics = useMemo(() => getResponsiveMetrics(width), [width]);
+  const styles = useMemo(() => createStyles(palette, isDark, responsiveMetrics), [palette, isDark, responsiveMetrics]);
   const [mode, setMode] = useState('sign-in');
   const [fullName, setFullName] = useState('');
   const [email, setEmail] = useState('');
@@ -144,8 +147,8 @@ export default function AuthScreen({ initialMessage = '', initialTone = 'info' }
   );
 }
 
-function createStyles(palette, isDark) {
-  return StyleSheet.create({
+function createStyles(palette, isDark, responsiveMetrics) {
+  return StyleSheet.create(scaleStyleDefinitions({
     cardTitleRow: {
       flexDirection: 'row',
       alignItems: 'center',
@@ -200,5 +203,5 @@ function createStyles(palette, isDark) {
       fontWeight: '700',
       textAlign: 'center',
     },
-  });
+  }, responsiveMetrics));
 }

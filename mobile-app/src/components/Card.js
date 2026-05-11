@@ -1,16 +1,19 @@
 import { useMemo } from 'react';
-import { StyleSheet, View } from 'react-native';
+import { StyleSheet, View, useWindowDimensions } from 'react-native';
 import { useTheme } from '../context/ThemeContext';
+import { getResponsiveMetrics, scaleStyleDefinitions } from '../theme';
 
 export default function Card({ children, style }) {
   const { palette, shadows } = useTheme();
-  const styles = useMemo(() => createStyles(palette, shadows), [palette, shadows]);
+  const { width } = useWindowDimensions();
+  const metrics = useMemo(() => getResponsiveMetrics(width), [width]);
+  const styles = useMemo(() => createStyles(palette, shadows, metrics), [palette, shadows, metrics]);
 
   return <View style={[styles.card, style]}>{children}</View>;
 }
 
-function createStyles(palette, shadows) {
-  return StyleSheet.create({
+function createStyles(palette, shadows, metrics) {
+  return StyleSheet.create(scaleStyleDefinitions({
     card: {
       backgroundColor: palette.card,
       borderRadius: 22,
@@ -19,5 +22,5 @@ function createStyles(palette, shadows) {
       padding: 16,
       ...shadows.card,
     },
-  });
+  }, metrics));
 }
