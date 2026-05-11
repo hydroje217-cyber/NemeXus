@@ -264,13 +264,17 @@ select {
 .app-shell {
   min-height: 100vh;
   display: grid;
-  grid-template-columns: 260px minmax(0, 1fr);
+  grid-template-columns: minmax(0, 1fr);
   color: #18212d;
 }
 
 .sidebar {
-  position: sticky;
+  position: fixed;
   top: 0;
+  left: 0;
+  z-index: 120;
+  width: 320px;
+  max-width: calc(100vw - 22px);
   height: 100vh;
   background: #ffffff;
   border-right: 1px solid #dbe5e8;
@@ -278,6 +282,50 @@ select {
   flex-direction: column;
   gap: 24px;
   padding: 22px;
+  overflow-y: auto;
+  scrollbar-gutter: stable;
+  box-shadow: 22px 0 52px rgba(24, 33, 45, 0.18);
+  transform: translateX(calc(-100% - 24px));
+  transition: transform 0.22s ease;
+}
+
+.sidebar.is-open {
+  transform: translateX(0);
+}
+
+.sidebar-toggle-button {
+  position: fixed;
+  top: 14px;
+  left: 14px;
+  z-index: 140;
+  width: 44px;
+  min-width: 44px;
+  height: 44px;
+  min-height: 44px;
+  padding: 0;
+  border: 1px solid #cfe0e5;
+  border-radius: 8px;
+  background: #ffffff;
+  color: #0b5e68;
+  box-shadow: 0 14px 32px rgba(24, 33, 45, 0.13);
+  transition: left 0.22s ease, background 0.18s ease, color 0.18s ease;
+}
+
+.sidebar-toggle-button[aria-expanded="true"] {
+  left: min(344px, calc(100vw - 58px));
+}
+
+.sidebar-scrim {
+  position: fixed;
+  inset: 0;
+  z-index: 110;
+  min-width: 0;
+  min-height: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: rgba(9, 18, 28, 0.46);
+  cursor: default;
 }
 
 .sidebar-mobile-head {
@@ -331,6 +379,25 @@ select {
   line-height: 1.15;
 }
 
+.dashboard-subnav-group {
+  display: grid;
+  gap: 2px;
+}
+
+.dashboard-subnav-group + .dashboard-subnav-group {
+  margin-top: 8px;
+}
+
+.dashboard-subnav-label {
+  display: block;
+  padding: 4px 0 2px;
+  color: #788990;
+  font-size: 0.68rem;
+  font-weight: 900;
+  letter-spacing: 0;
+  text-transform: uppercase;
+}
+
 .dashboard-subnav button svg {
   flex: 0 0 auto;
 }
@@ -351,7 +418,7 @@ select {
 }
 
 .content {
-  padding: 10px;
+  padding: 14px 10px 10px 74px;
   display: grid;
   gap: 20px;
   align-content: start;

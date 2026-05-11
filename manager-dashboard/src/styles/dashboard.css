@@ -12,6 +12,14 @@
   gap: 10px;
 }
 
+.topbar-status-row {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+  min-width: 0;
+}
+
 .freshness-pill {
   min-height: 36px;
   border: 1px solid #cfe0e5;
@@ -39,6 +47,58 @@
   margin: 2px 0 0;
   font-size: 1.65rem;
   letter-spacing: 0;
+}
+
+.topbar-title-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.topbar-title-copy {
+  min-width: 0;
+}
+
+.topbar-menu-button {
+  display: none;
+}
+
+.mobile-title-refresh {
+  display: none;
+}
+
+.status-strip {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 0;
+}
+
+.status-pill {
+  min-height: 28px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 9px;
+  border: 1px solid #d2e1e6;
+  border-radius: 999px;
+  background: #ffffff;
+  color: #4b5d66;
+  font-size: 0.72rem;
+  font-weight: 900;
+  white-space: nowrap;
+}
+
+.status-pill.connected {
+  border-color: #b9e5d2;
+  background: #eefbf4;
+  color: #11633a;
+}
+
+.status-pill.warning {
+  border-color: #efd590;
+  background: #fff7df;
+  color: #765310;
 }
 
 .eyebrow {
@@ -169,7 +229,7 @@
 }
 
 .operation-alerts-panel {
-  --operation-alert-card-height: 86px;
+  --operation-alert-card-height: 88px;
   min-width: 0;
   background: #ffffff;
   border: 1px solid #dbe5e8;
@@ -237,9 +297,43 @@
   gap: 6px;
 }
 
+.operation-alert-card-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+}
+
 .operation-alert-card strong {
   color: #102236;
   font-size: 0.9rem;
+}
+
+.alert-severity-badge {
+  flex: 0 0 auto;
+  min-height: 22px;
+  display: inline-flex;
+  align-items: center;
+  padding: 0 8px;
+  border-radius: 999px;
+  font-size: 0.62rem;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.alert-severity-badge.critical {
+  background: #fee2e2;
+  color: #991b1b;
+}
+
+.alert-severity-badge.warning {
+  background: #fef3c7;
+  color: #92400e;
+}
+
+.alert-severity-badge.info {
+  background: #dff7fb;
+  color: #0e6671;
 }
 
 .operation-alert-card p {
@@ -347,11 +441,28 @@
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 14px;
-  align-items: start;
+  align-items: stretch;
 }
 
 .overview-top-grid.summary-hidden {
   grid-template-columns: 1fr;
+}
+
+@media (min-width: 981px) and (max-width: 1600px) {
+  .overview-top-grid {
+    grid-template-columns: minmax(360px, 0.82fr) minmax(0, 1.18fr);
+  }
+
+  .operation-alerts-panel {
+    height: 368px;
+    min-height: 0;
+  }
+
+  .operation-alert-scroll,
+  .operation-alert-scroll.has-peek {
+    max-height: none;
+    min-height: 0;
+  }
 }
 
 .live-summary-panel {
@@ -368,13 +479,13 @@
 
 .live-summary-grid {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(132px, 1fr));
   gap: 10px;
 }
 
 .live-summary-card {
   min-width: 0;
-  min-height: 88px;
+  min-height: 70px;
   border: 1px solid #d3dde3;
   border-radius: 8px;
   background: #f8fbfc;
@@ -383,6 +494,10 @@
   align-items: flex-start;
   justify-content: space-between;
   gap: 12px;
+}
+
+.live-summary-card > div {
+  min-width: 0;
 }
 
 .live-summary-card:nth-child(4),
@@ -399,7 +514,9 @@
   color: #60727c;
   font-size: 0.78rem;
   font-weight: 900;
+  line-height: 1.2;
   text-transform: uppercase;
+  overflow-wrap: anywhere;
 }
 
 .live-summary-card strong {
@@ -944,16 +1061,24 @@
 }
 
 .chart-toolbar {
-  min-height: 54px;
+  min-height: 44px;
   border: 1px solid #dbe5e8;
   border-radius: 8px;
   background: #f9fcff;
-  padding: 10px;
+  padding: 6px 8px;
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 10px;
   width: 100%;
+  opacity: 0.88;
+  transition: opacity 0.18s ease, border-color 0.18s ease;
+}
+
+.analytics-panel:hover .chart-toolbar,
+.chart-toolbar:focus-within {
+  opacity: 1;
+  border-color: #b8d7df;
 }
 
 .chart-toolbar > span {
@@ -970,10 +1095,10 @@
 }
 
 .chart-toolbar button {
-  width: 32px;
-  min-width: 32px;
-  min-height: 32px;
-  height: 32px;
+  width: 30px;
+  min-width: 30px;
+  min-height: 30px;
+  height: 30px;
   padding: 0;
   border: 1px solid #dbe5e8;
   background: #ffffff;
@@ -1188,6 +1313,10 @@
 .chart-empty {
   margin: 0;
   color: #60727c;
+  border: 1px dashed #c8d8de;
+  border-radius: 8px;
+  background: #f8fbfc;
+  padding: 14px;
   font-weight: 700;
 }
 

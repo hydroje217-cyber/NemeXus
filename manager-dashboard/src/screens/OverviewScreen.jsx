@@ -483,7 +483,7 @@ function addRangeAlert(alerts, reading, field, label, min, max, unit = '') {
   });
 }
 
-function buildOperationAlerts(dashboard) {
+export function buildOperationAlerts(dashboard) {
   const alerts = [];
   const readings = dashboard?.recentReadings ?? [];
   const now = Date.now();
@@ -577,7 +577,7 @@ function PendingApprovalNotice({ dashboard, onOpenApprovals }) {
   );
 }
 
-function LiveSummaryPanel({ dashboard }) {
+function LiveSummaryPanel({ dashboard, panelRef }) {
   const stats = dashboard?.stats ?? {};
   const summaryItems = [
     { label: 'Operators', value: stats.totalOperators ?? 0, icon: Users },
@@ -588,7 +588,7 @@ function LiveSummaryPanel({ dashboard }) {
   ];
 
   return (
-    <section className="live-summary-panel">
+    <section className="live-summary-panel" ref={panelRef}>
       <header className="operation-alerts-heading">
         <span className="section-icon">
           <Zap size={16} />
@@ -618,12 +618,15 @@ function LiveSummaryPanel({ dashboard }) {
   );
 }
 
-function OperationAlertsPanel({ dashboard }) {
+function OperationAlertsPanel({ dashboard, panelRef }) {
   const alerts = buildOperationAlerts(dashboard);
   const hasAlerts = alerts.length > 0;
 
   return (
-    <section className={hasAlerts ? 'operation-alerts-panel has-alerts' : 'operation-alerts-panel'}>
+    <section
+      className={hasAlerts ? 'operation-alerts-panel has-alerts' : 'operation-alerts-panel'}
+      ref={panelRef}
+    >
       <header className="operation-alerts-heading">
         <span className="section-icon">
           {hasAlerts ? <AlertTriangle size={16} /> : <ShieldCheck size={16} />}
@@ -639,7 +642,10 @@ function OperationAlertsPanel({ dashboard }) {
           <div className="operation-alert-grid">
             {alerts.map((alert) => (
               <article className={`operation-alert-card ${alert.severity}`} key={alert.key}>
-                <strong>{alert.title}</strong>
+                <div className="operation-alert-card-head">
+                  <strong>{alert.title}</strong>
+                  <span className={`alert-severity-badge ${alert.severity}`}>{alert.severity}</span>
+                </div>
                 <p>{alert.detail}</p>
               </article>
             ))}
@@ -652,13 +658,13 @@ function OperationAlertsPanel({ dashboard }) {
   );
 }
 
-function OverviewTopPanels({ dashboard, isAdmin, onOpenApprovals }) {
+function OverviewTopPanels({ activeSection, dashboard, isAdmin, onOpenApprovals, operationsRef, summaryRef }) {
   return (
     <>
       <PendingApprovalNotice dashboard={dashboard} onOpenApprovals={onOpenApprovals} />
-      <div className={isAdmin ? 'overview-top-grid' : 'overview-top-grid summary-hidden'}>
-        {isAdmin ? <LiveSummaryPanel dashboard={dashboard} /> : null}
-        <OperationAlertsPanel dashboard={dashboard} />
+      <div className={isAdmin ? `overview-top-grid active-${activeSection}` : `overview-top-grid summary-hidden active-${activeSection}`}>
+        {isAdmin ? <LiveSummaryPanel dashboard={dashboard} panelRef={summaryRef} /> : null}
+        <OperationAlertsPanel dashboard={dashboard} panelRef={operationsRef} />
       </div>
     </>
   );
@@ -1060,6 +1066,8 @@ export default function OverviewScreen({
   const [chemicalZoom, setChemicalZoom] = useState(1);
   const [monthlyProductionZoom, setMonthlyProductionZoom] = useState(1);
   const [dailyProductionZoom, setDailyProductionZoom] = useState(1);
+  const summaryRef = useRef(null);
+  const operationsRef = useRef(null);
   const productionRef = useRef(null);
   const powerRef = useRef(null);
   const chemicalRef = useRef(null);
@@ -1070,6 +1078,8 @@ export default function OverviewScreen({
   const monthlyChemicalUsage = dashboard?.monthlyChemicalUsage ?? { totalChlorine: 0, totalPeroxide: 0, rows: [] };
   const activeDailyRows = dailyProduction.rows.filter((row) => Number(row.production) > 0);
   const sectionRefs = {
+    summary: summaryRef,
+    operations: operationsRef,
     production: productionRef,
     power: powerRef,
     chemical: chemicalRef,
@@ -1139,7 +1149,14 @@ export default function OverviewScreen({
 
   return (
     <>
-      <OverviewTopPanels dashboard={dashboard} isAdmin={isAdmin} onOpenApprovals={onOpenApprovals} />
+      <OverviewTopPanels
+        activeSection={activeSection}
+        dashboard={dashboard}
+        isAdmin={isAdmin}
+        onOpenApprovals={onOpenApprovals}
+        operationsRef={operationsRef}
+        summaryRef={summaryRef}
+      />
       <section className="chart-grid">
         <ChartPanel
           title="Monthly Production"
