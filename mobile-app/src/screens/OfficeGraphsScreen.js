@@ -9,7 +9,8 @@ import MessageBanner from '../components/MessageBanner';
 import ScreenShell from '../components/ScreenShell';
 import { useAuth } from '../context/AuthContext';
 import { useTheme } from '../context/ThemeContext';
-import { getOfficeDashboardSnapshot } from '../services/office';
+import { getDailyProductionForMonth, getMonthlyAnalyticsForYear, getOfficeDashboardSnapshot } from '../services/office';
+import { getResponsiveMetrics, scaleStyleDefinitions } from '../theme';
 import { saveNativeExportFile, buildNativeExportSuccessMessage } from '../utils/exportFiles';
 
 function formatNumber(value, decimals = 2) {
@@ -348,8 +349,126 @@ function ChartValueDetails({ selected, styles }) {
 const MIN_CHART_ZOOM = 0.75;
 const MAX_CHART_ZOOM = 2;
 const CHART_ZOOM_STEP = 0.25;
+const CHART_HEIGHT_COMPACT = 230;
+const CHART_HEIGHT_WIDE = 270;
+const CHART_CONTAINER_MIN_HEIGHT = 292;
+const MONTHLY_BASE_BAR_WIDTH_COMPACT = 30;
+const MONTHLY_BASE_BAR_WIDTH_WIDE = 34;
+const MONTHLY_BASE_SPACING_COMPACT = 32;
+const MONTHLY_BASE_SPACING_WIDE = 42;
+const MONTHLY_CONTENT_WIDTH_COMPACT = 560;
+const MONTHLY_CONTENT_WIDTH_WIDE = 820;
+const MONTH_PICKER_LABELS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 
-function MonthlyProductionCard({ monthlyProduction, palette, isDark, isWide, screenWidth, styles, cardStyle }) {
+function createMonthYearLabel(date) {
+  return date.toLocaleString('en-US', { month: 'long', year: 'numeric' });
+}
+
+function createDailyProductionPlaceholder(monthDate) {
+  const today = new Date();
+  const monthStart = new Date(monthDate.getFullYear(), monthDate.getMonth(), 1);
+  const monthEnd = new Date(monthDate.getFullYear(), monthDate.getMonth() + 1, 0);
+  const chartEnd = monthStart > today ? monthEnd : monthEnd > today ? today : monthEnd;
+  const rows = [];
+
+  for (let date = new Date(monthStart); date <= chartEnd; date.setDate(date.getDate() + 1)) {
+    const key = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+
+    rows.push({
+      key,
+      date: key,
+      label: `${String(date.getMonth() + 1).padStart(2, '0')}/${String(date.getDate()).padStart(2, '0')}`,
+      production: 0,
+    });
+  }
+
+  rows.sort((a, b) => b.key.localeCompare(a.key));
+
+  return {
+    monthLabel: createMonthYearLabel(monthDate),
+    totalProduction: 0,
+    rows,
+  };
+}
+
+function createMonthlyRowsForYear(year) {
+  return MONTH_PICKER_LABELS.map((label, monthIndex) => ({
+    key: `${year}-${String(monthIndex + 1).padStart(2, '0')}`,
+    label: `${label}-${String(year).slice(-2)}`,
+  })).reverse();
+}
+
+function createMonthlyAnalyticsPlaceholder(year) {
+  const rows = createMonthlyRowsForYear(year);
+
+  return {
+    monthlyProduction: {
+      totalProduction: 0,
+      averageProduction: 0,
+      rows: rows.map((row) => ({ ...row, production: 0, total: 0, readingCount: 0 })),
+    },
+    monthlyPowerConsumption: {
+      totalPower: 0,
+      rows: rows.map((row) => ({ ...row, chlorinationPower: 0, deepwellPower: 0, totalPower: 0 })),
+    },
+    monthlyChemicalUsage: {
+      totalChlorine: 0,
+      totalPeroxide: 0,
+      rows: rows.map((row) => ({ ...row, chlorineUsage: 0, peroxideUsage: 0, totalUsage: 0 })),
+    },
+  };
+}
+
+function YearPickerPanel({ year, onChangeYear, isLoading, palette, styles, compact, label = 'Year' }) {
+  return (
+    <View style={[styles.yearPickerPanel, compact && styles.yearPickerPanelCompact]}>
+      <View style={styles.monthPickerHeader}>
+        <Text style={styles.chartToolbarLabel}>{label}</Text>
+        {isLoading ? <ActivityIndicator size="small" color={palette.teal600} /> : null}
+      </View>
+      <View style={styles.yearPickerRow}>
+        <Pressable
+          onPress={() => onChangeYear(year - 1)}
+          disabled={isLoading}
+          accessibilityLabel={`Show ${year - 1} monthly charts`}
+          style={({ pressed }) => [
+            styles.zoomButton,
+            pressed && !isLoading ? styles.pressed : null,
+            isLoading ? styles.zoomButtonDisabled : null,
+          ]}
+        >
+          <Ionicons name="chevron-back" size={15} color={palette.ink900} />
+        </Pressable>
+        <Text style={styles.yearPickerValue}>{year}</Text>
+        <Pressable
+          onPress={() => onChangeYear(year + 1)}
+          disabled={isLoading}
+          accessibilityLabel={`Show ${year + 1} monthly charts`}
+          style={({ pressed }) => [
+            styles.zoomButton,
+            pressed && !isLoading ? styles.pressed : null,
+            isLoading ? styles.zoomButtonDisabled : null,
+          ]}
+        >
+          <Ionicons name="chevron-forward" size={15} color={palette.ink900} />
+        </Pressable>
+      </View>
+    </View>
+  );
+}
+
+function MonthlyProductionCard({
+  monthlyProduction,
+  palette,
+  isDark,
+  isWide,
+  screenWidth,
+  styles,
+  cardStyle,
+  selectedYear,
+  onChangeYear,
+  isLoadingYear,
+}) {
   const rows = monthlyProduction?.rows ?? [];
   const [zoomLevel, setZoomLevel] = useState(1);
   const [selectedBar, setSelectedBar] = useState(null);
@@ -360,13 +479,13 @@ function MonthlyProductionCard({ monthlyProduction, palette, isDark, isWide, scr
     ...rows.map((row) => row.production || 0),
     1
   );
-  const chartHeight = isWide ? 260 : 220;
-  const baseBarWidth = isWide ? 34 : 30;
-  const baseSpacing = isWide ? 42 : 32;
+  const chartHeight = isWide ? CHART_HEIGHT_WIDE : CHART_HEIGHT_COMPACT;
+  const baseBarWidth = isWide ? MONTHLY_BASE_BAR_WIDTH_WIDE : MONTHLY_BASE_BAR_WIDTH_COMPACT;
+  const baseSpacing = isWide ? MONTHLY_BASE_SPACING_WIDE : MONTHLY_BASE_SPACING_COMPACT;
   const barWidth = Math.round(baseBarWidth * zoomLevel);
   const spacing = Math.round(baseSpacing * zoomLevel);
   const rawViewportWidth = Math.max(280, screenWidth - (isWide ? 120 : 72));
-  const baseContentWidth = Math.max(rows.length * (baseBarWidth + baseSpacing) + 90, isWide ? 820 : 560);
+  const baseContentWidth = Math.max(rows.length * (baseBarWidth + baseSpacing) + 90, isWide ? MONTHLY_CONTENT_WIDTH_WIDE : MONTHLY_CONTENT_WIDTH_COMPACT);
   const chartViewportWidth = Math.min(rawViewportWidth, Math.max(280, baseContentWidth - 120));
   const chartMaxValue = maxVolume <= 0 ? 1 : Math.ceil(maxVolume * 1.18);
   const hasData = rows.some((row) => row.production > 0);
@@ -388,6 +507,10 @@ function MonthlyProductionCard({ monthlyProduction, palette, isDark, isWide, scr
       return Math.min(MAX_CHART_ZOOM, Math.max(MIN_CHART_ZOOM, Number(nextZoom.toFixed(2))));
     });
   };
+  useEffect(() => {
+    setSelectedBar(null);
+    setZoomLevel(1);
+  }, [selectedYear]);
   const chartData = rows.map((row) => {
     const production = Math.max(0, row.production || 0);
 
@@ -412,6 +535,7 @@ function MonthlyProductionCard({ monthlyProduction, palette, isDark, isWide, scr
         ) : null,
     };
   });
+  const chartKey = `monthly-production:${selectedYear}:${rows.map((row) => `${row.key}:${row.production || 0}`).join('|')}`;
 
   return (
     <Card style={[styles.panelCard, cardStyle]}>
@@ -433,9 +557,18 @@ function MonthlyProductionCard({ monthlyProduction, palette, isDark, isWide, scr
             <Text numberOfLines={1} adjustsFontSizeToFit style={styles.productionSummaryValue}>
               {formatNumber(totalProduction)}
             </Text>
-            <Text style={styles.productionSummaryHint}>Latest 10 months</Text>
+            <Text style={styles.productionSummaryHint}>{selectedYear}</Text>
           </View>
         </View>
+
+        <YearPickerPanel
+          year={selectedYear}
+          onChangeYear={onChangeYear}
+          isLoading={isLoadingYear}
+          palette={palette}
+          styles={styles}
+          compact={!isWide}
+        />
 
         <View style={[styles.chartToolbar, !isWide && styles.chartToolbarCompact]}>
           <Text style={styles.chartToolbarLabel}>Zoom</Text>
@@ -483,6 +616,7 @@ function MonthlyProductionCard({ monthlyProduction, palette, isDark, isWide, scr
 
       <View style={styles.productionChart}>
         <BarChart
+          key={chartKey}
           data={chartData}
           width={chartViewportWidth}
           height={chartHeight}
@@ -516,6 +650,12 @@ function MonthlyProductionCard({ monthlyProduction, palette, isDark, isWide, scr
           showScrollIndicator
           indicatorColor={isDark ? 'white' : 'black'}
         />
+        {isLoadingYear ? (
+          <View style={styles.chartLoadingOverlay} pointerEvents="none">
+            <ActivityIndicator size="small" color={palette.teal600} />
+            <Text style={styles.chartLoadingText}>Loading {selectedYear}</Text>
+          </View>
+        ) : null}
       </View>
 
       <ChartValueDetails selected={selectedBar} styles={styles} />
@@ -534,7 +674,18 @@ function MonthlyProductionCard({ monthlyProduction, palette, isDark, isWide, scr
   );
 }
 
-function MonthlyPowerConsumptionCard({ monthlyPowerConsumption, palette, isDark, isWide, screenWidth, styles, cardStyle }) {
+function MonthlyPowerConsumptionCard({
+  monthlyPowerConsumption,
+  palette,
+  isDark,
+  isWide,
+  screenWidth,
+  styles,
+  cardStyle,
+  selectedYear,
+  onChangeYear,
+  isLoadingYear,
+}) {
   const rows = monthlyPowerConsumption?.rows ?? [];
   const [zoomLevel, setZoomLevel] = useState(1);
   const [selectedBar, setSelectedBar] = useState(null);
@@ -547,13 +698,13 @@ function MonthlyPowerConsumptionCard({ monthlyPowerConsumption, palette, isDark,
     ...rows.map((row) => row.totalPower || (row.chlorinationPower || 0) + (row.deepwellPower || 0)),
     1
   );
-  const chartHeight = isWide ? 270 : 230;
-  const baseBarWidth = isWide ? 34 : 30;
-  const baseSpacing = isWide ? 42 : 32;
+  const chartHeight = isWide ? CHART_HEIGHT_WIDE : CHART_HEIGHT_COMPACT;
+  const baseBarWidth = isWide ? MONTHLY_BASE_BAR_WIDTH_WIDE : MONTHLY_BASE_BAR_WIDTH_COMPACT;
+  const baseSpacing = isWide ? MONTHLY_BASE_SPACING_WIDE : MONTHLY_BASE_SPACING_COMPACT;
   const barWidth = Math.round(baseBarWidth * zoomLevel);
   const spacing = Math.round(baseSpacing * zoomLevel);
   const rawViewportWidth = Math.max(280, screenWidth - (isWide ? 120 : 72));
-  const baseContentWidth = Math.max(rows.length * (baseBarWidth + baseSpacing) + 90, isWide ? 820 : 560);
+  const baseContentWidth = Math.max(rows.length * (baseBarWidth + baseSpacing) + 90, isWide ? MONTHLY_CONTENT_WIDTH_WIDE : MONTHLY_CONTENT_WIDTH_COMPACT);
   const chartViewportWidth = Math.min(rawViewportWidth, Math.max(280, baseContentWidth - 120));
   const chartMaxValue = maxPower <= 0 ? 1 : Math.ceil(maxPower * 1.22);
   const hasData = rows.some((row) => row.totalPower > 0);
@@ -612,6 +763,10 @@ function MonthlyPowerConsumptionCard({ monthlyPowerConsumption, palette, isDark,
       return Math.min(MAX_CHART_ZOOM, Math.max(MIN_CHART_ZOOM, Number(nextZoom.toFixed(2))));
     });
   };
+  useEffect(() => {
+    setSelectedBar(null);
+    setZoomLevel(1);
+  }, [selectedYear]);
   const chartData = rows.map((row) => {
     const chlorinationPower = Math.max(0, row.chlorinationPower || 0);
     const deepwellPower = Math.max(0, row.deepwellPower || 0);
@@ -644,6 +799,7 @@ function MonthlyPowerConsumptionCard({ monthlyPowerConsumption, palette, isDark,
       ),
     };
   });
+  const chartKey = `monthly-power:${selectedYear}:${rows.map((row) => `${row.key}:${row.chlorinationPower || 0}:${row.deepwellPower || 0}`).join('|')}`;
 
   return (
     <Card style={[styles.panelCard, cardStyle]}>
@@ -665,9 +821,18 @@ function MonthlyPowerConsumptionCard({ monthlyPowerConsumption, palette, isDark,
             <Text numberOfLines={1} adjustsFontSizeToFit style={styles.productionSummaryValue}>
               {formatNumber(totalPower)}
             </Text>
-            <Text style={styles.productionSummaryHint}>Latest 10 months</Text>
+            <Text style={styles.productionSummaryHint}>{selectedYear}</Text>
           </View>
         </View>
+
+        <YearPickerPanel
+          year={selectedYear}
+          onChangeYear={onChangeYear}
+          isLoading={isLoadingYear}
+          palette={palette}
+          styles={styles}
+          compact={!isWide}
+        />
 
         <View style={[styles.chartToolbar, !isWide && styles.chartToolbarCompact]}>
           <Text style={styles.chartToolbarLabel}>Zoom</Text>
@@ -715,6 +880,7 @@ function MonthlyPowerConsumptionCard({ monthlyPowerConsumption, palette, isDark,
 
       <View style={styles.productionChart}>
         <BarChart
+          key={chartKey}
           stackData={chartData}
           width={chartViewportWidth}
           height={chartHeight}
@@ -743,6 +909,12 @@ function MonthlyPowerConsumptionCard({ monthlyPowerConsumption, palette, isDark,
           showScrollIndicator
           indicatorColor={isDark ? 'white' : 'black'}
         />
+        {isLoadingYear ? (
+          <View style={styles.chartLoadingOverlay} pointerEvents="none">
+            <ActivityIndicator size="small" color={palette.teal600} />
+            <Text style={styles.chartLoadingText}>Loading {selectedYear}</Text>
+          </View>
+        ) : null}
       </View>
 
       <ChartValueDetails selected={selectedBar} styles={styles} />
@@ -765,7 +937,18 @@ function MonthlyPowerConsumptionCard({ monthlyPowerConsumption, palette, isDark,
   );
 }
 
-function MonthlyChemicalUsageCard({ monthlyChemicalUsage, palette, isDark, isWide, screenWidth, styles, cardStyle }) {
+function MonthlyChemicalUsageCard({
+  monthlyChemicalUsage,
+  palette,
+  isDark,
+  isWide,
+  screenWidth,
+  styles,
+  cardStyle,
+  selectedYear,
+  onChangeYear,
+  isLoadingYear,
+}) {
   const rows = monthlyChemicalUsage?.rows ?? [];
   const [zoomLevel, setZoomLevel] = useState(1);
   const [selectedBar, setSelectedBar] = useState(null);
@@ -781,13 +964,13 @@ function MonthlyChemicalUsageCard({ monthlyChemicalUsage, palette, isDark, isWid
     ...rows.map((row) => row.totalUsage || (row.chlorineUsage || 0) + (row.peroxideUsage || 0)),
     1
   );
-  const chartHeight = isWide ? 270 : 230;
-  const baseBarWidth = isWide ? 34 : 30;
-  const baseSpacing = isWide ? 42 : 32;
+  const chartHeight = isWide ? CHART_HEIGHT_WIDE : CHART_HEIGHT_COMPACT;
+  const baseBarWidth = isWide ? MONTHLY_BASE_BAR_WIDTH_WIDE : MONTHLY_BASE_BAR_WIDTH_COMPACT;
+  const baseSpacing = isWide ? MONTHLY_BASE_SPACING_WIDE : MONTHLY_BASE_SPACING_COMPACT;
   const barWidth = Math.round(baseBarWidth * zoomLevel);
   const spacing = Math.round(baseSpacing * zoomLevel);
   const rawViewportWidth = Math.max(280, screenWidth - (isWide ? 120 : 72));
-  const baseContentWidth = Math.max(rows.length * (baseBarWidth + baseSpacing) + 90, isWide ? 820 : 560);
+  const baseContentWidth = Math.max(rows.length * (baseBarWidth + baseSpacing) + 90, isWide ? MONTHLY_CONTENT_WIDTH_WIDE : MONTHLY_CONTENT_WIDTH_COMPACT);
   const chartViewportWidth = Math.min(rawViewportWidth, Math.max(280, baseContentWidth - 120));
   const chartMaxValue = maxUsage <= 0 ? 1 : Math.ceil(maxUsage * 1.22);
   const hasData = rows.some((row) => row.totalUsage > 0 || row.chlorineUsage > 0 || row.peroxideUsage > 0);
@@ -846,6 +1029,10 @@ function MonthlyChemicalUsageCard({ monthlyChemicalUsage, palette, isDark, isWid
       return Math.min(MAX_CHART_ZOOM, Math.max(MIN_CHART_ZOOM, Number(nextZoom.toFixed(2))));
     });
   };
+  useEffect(() => {
+    setSelectedBar(null);
+    setZoomLevel(1);
+  }, [selectedYear]);
   const chartData = rows.map((row) => {
     const chlorineUsage = Math.max(0, row.chlorineUsage || 0);
     const peroxideUsage = Math.max(0, row.peroxideUsage || 0);
@@ -878,6 +1065,7 @@ function MonthlyChemicalUsageCard({ monthlyChemicalUsage, palette, isDark, isWid
       ),
     };
   });
+  const chartKey = `monthly-chemical:${selectedYear}:${rows.map((row) => `${row.key}:${row.chlorineUsage || 0}:${row.peroxideUsage || 0}`).join('|')}`;
 
   return (
     <Card style={[styles.panelCard, cardStyle]}>
@@ -889,45 +1077,30 @@ function MonthlyChemicalUsageCard({ monthlyChemicalUsage, palette, isDark, isWid
       />
 
       <View style={[styles.chartMetaRow, !isWide && styles.chartMetaRowCompact]}>
-        <View style={styles.chemicalSummaryTotals}>
-          <View style={[styles.productionSummaryPill, styles.chemicalSummaryPill]}>
-            <View style={[styles.productionSummaryAccent, styles.chemicalSummaryAccentChlorine]} />
-            <View style={[styles.productionSummaryIcon, styles.chemicalSummaryIconChlorine]}>
-              <Ionicons name="water-outline" size={15} color={chlorineColor} />
-            </View>
-            <View style={styles.productionSummaryCopy}>
-              <Text style={styles.productionSummaryLabel}>Total Chlorine</Text>
-              <Text
-                numberOfLines={1}
-                adjustsFontSizeToFit
-                minimumFontScale={0.55}
-                style={[styles.productionSummaryValue, styles.chemicalSummaryValue]}
-              >
-                {formatNumber(totalChlorine)}
-              </Text>
-              <Text style={styles.productionSummaryHint}>Latest 10 months</Text>
-            </View>
+        <View style={[styles.productionSummaryPill, isWide && styles.productionSummaryPillWide]}>
+          <View style={styles.productionSummaryAccent} />
+          <View style={styles.productionSummaryIcon}>
+            <Ionicons name="flask-outline" size={15} color={palette.teal600} />
           </View>
-
-          <View style={[styles.productionSummaryPill, styles.chemicalSummaryPill]}>
-            <View style={[styles.productionSummaryAccent, styles.chemicalSummaryAccentPeroxide]} />
-            <View style={[styles.productionSummaryIcon, styles.chemicalSummaryIconPeroxide]}>
-              <Ionicons name="flask-outline" size={15} color={peroxideColor} />
-            </View>
-            <View style={styles.productionSummaryCopy}>
-              <Text style={styles.productionSummaryLabel}>Total Peroxide</Text>
-              <Text
-                numberOfLines={1}
-                adjustsFontSizeToFit
-                minimumFontScale={0.55}
-                style={[styles.productionSummaryValue, styles.chemicalSummaryValue]}
-              >
-                {formatNumber(totalPeroxide)}
-              </Text>
-              <Text style={styles.productionSummaryHint}>Latest 10 months</Text>
-            </View>
+          <View style={styles.productionSummaryCopy}>
+            <Text style={styles.productionSummaryLabel}>Total Chemicals</Text>
+            <Text numberOfLines={1} adjustsFontSizeToFit style={styles.productionSummaryValue}>
+              {formatNumber(totalChlorine + totalPeroxide)}
+            </Text>
+            <Text style={styles.productionSummaryHint}>
+              {selectedYear} / Chlorine {formatNumber(totalChlorine)} / Peroxide {formatNumber(totalPeroxide)}
+            </Text>
           </View>
         </View>
+
+        <YearPickerPanel
+          year={selectedYear}
+          onChangeYear={onChangeYear}
+          isLoading={isLoadingYear}
+          palette={palette}
+          styles={styles}
+          compact={!isWide}
+        />
 
         <View style={[styles.chartToolbar, !isWide && styles.chartToolbarCompact]}>
           <Text style={styles.chartToolbarLabel}>Zoom</Text>
@@ -973,8 +1146,9 @@ function MonthlyChemicalUsageCard({ monthlyChemicalUsage, palette, isDark, isWid
         </View>
       </View>
 
-      <View style={[styles.productionChart, styles.chemicalUsageChart]}>
+      <View style={styles.productionChart}>
         <BarChart
+          key={chartKey}
           stackData={chartData}
           width={chartViewportWidth}
           height={chartHeight}
@@ -1003,6 +1177,12 @@ function MonthlyChemicalUsageCard({ monthlyChemicalUsage, palette, isDark, isWid
           showScrollIndicator
           indicatorColor={isDark ? 'white' : 'black'}
         />
+        {isLoadingYear ? (
+          <View style={styles.chartLoadingOverlay} pointerEvents="none">
+            <ActivityIndicator size="small" color={palette.teal600} />
+            <Text style={styles.chartLoadingText}>Loading {selectedYear}</Text>
+          </View>
+        ) : null}
       </View>
 
       <ChartValueDetails selected={selectedBar} styles={styles} />
@@ -1027,10 +1207,24 @@ function MonthlyChemicalUsageCard({ monthlyChemicalUsage, palette, isDark, isWid
   );
 }
 
-function DailyProductionCard({ dailyProduction, palette, isDark, isWide, screenWidth, styles, cardStyle }) {
+function DailyProductionCard({
+  dailyProduction,
+  palette,
+  isDark,
+  isWide,
+  screenWidth,
+  styles,
+  cardStyle,
+  selectedMonthDate,
+  onChangeMonth,
+  isLoadingMonth,
+}) {
   const rows = dailyProduction?.rows ?? [];
   const [zoomLevel, setZoomLevel] = useState(1);
   const [selectedBar, setSelectedBar] = useState(null);
+  const selectedYear = selectedMonthDate.getFullYear();
+  const selectedMonthIndex = selectedMonthDate.getMonth();
+  const selectedMonthKey = `${selectedYear}-${String(selectedMonthIndex + 1).padStart(2, '0')}`;
   const totalProduction =
     dailyProduction?.totalProduction ??
     rows.reduce((sum, row) => sum + (Number(row.production) || 0), 0);
@@ -1038,24 +1232,24 @@ function DailyProductionCard({ dailyProduction, palette, isDark, isWide, screenW
     ...rows.map((row) => row.production || 0),
     1
   );
-  const chartHeight = isWide ? 300 : 250;
-  const baseBarWidth = isWide ? 18 : 16;
-  const baseSpacing = isWide ? 18 : 14;
+  const chartHeight = isWide ? CHART_HEIGHT_WIDE : CHART_HEIGHT_COMPACT;
+  const baseBarWidth = isWide ? MONTHLY_BASE_BAR_WIDTH_WIDE : MONTHLY_BASE_BAR_WIDTH_COMPACT;
+  const baseSpacing = isWide ? MONTHLY_BASE_SPACING_WIDE : MONTHLY_BASE_SPACING_COMPACT;
   const barWidth = Math.round(baseBarWidth * zoomLevel);
   const spacing = Math.round(baseSpacing * zoomLevel);
   const rawViewportWidth = Math.max(280, screenWidth - (isWide ? 120 : 72));
-  const baseContentWidth = Math.max(rows.length * (baseBarWidth + baseSpacing) + 90, isWide ? 920 : 640);
+  const baseContentWidth = Math.max(rows.length * (baseBarWidth + baseSpacing) + 90, isWide ? MONTHLY_CONTENT_WIDTH_WIDE : MONTHLY_CONTENT_WIDTH_COMPACT);
   const chartViewportWidth = Math.min(rawViewportWidth, Math.max(280, baseContentWidth - 120));
   const chartMaxValue = maxVolume <= 0 ? 1 : Math.ceil(maxVolume * 1.18);
   const hasData = rows.some((row) => row.production > 0);
   const zoomPercent = Math.round(zoomLevel * 100);
   const canZoomOut = zoomLevel > MIN_CHART_ZOOM;
   const canZoomIn = zoomLevel < MAX_CHART_ZOOM;
-  const valueLabelWidth = Math.round(Math.max(46, Math.min(64, barWidth + 34)));
-  const valueLabelFontSize = zoomLevel >= 1.4 ? 8 : 7;
+  const valueLabelWidth = Math.round(Math.max(52, Math.min(74, barWidth + 28)));
+  const valueLabelFontSize = zoomLevel >= 1.35 ? 10 : 9;
   const topLabelContainerStyle = {
     width: valueLabelWidth,
-    height: 16,
+    height: 18,
     left: (barWidth - valueLabelWidth) / 2,
     justifyContent: 'center',
     alignItems: 'center',
@@ -1066,6 +1260,16 @@ function DailyProductionCard({ dailyProduction, palette, isDark, isWide, screenW
       return Math.min(MAX_CHART_ZOOM, Math.max(MIN_CHART_ZOOM, Number(nextZoom.toFixed(2))));
     });
   };
+  const changeYear = (offset) => {
+    onChangeMonth(new Date(selectedYear + offset, selectedMonthIndex, 1));
+  };
+  const selectMonth = (monthIndex) => {
+    onChangeMonth(new Date(selectedYear, monthIndex, 1));
+  };
+  useEffect(() => {
+    setSelectedBar(null);
+    setZoomLevel(1);
+  }, [selectedMonthKey]);
   const chartData = rows.map((row) => {
     const production = Math.max(0, row.production || 0);
     const productionColor = isDark ? '#1D7896' : '#176A87';
@@ -1091,6 +1295,7 @@ function DailyProductionCard({ dailyProduction, palette, isDark, isWide, screenW
         ) : null,
     };
   });
+  const dailyChartKey = `${selectedMonthKey}:${rows.length}:${rows.map((row) => `${row.key}:${row.production || 0}`).join('|')}`;
 
   return (
     <Card style={[styles.panelCard, cardStyle]}>
@@ -1113,6 +1318,64 @@ function DailyProductionCard({ dailyProduction, palette, isDark, isWide, screenW
               {formatNumber(totalProduction)}
             </Text>
             <Text style={styles.productionSummaryHint}>{dailyProduction?.monthLabel || 'Current month'}</Text>
+          </View>
+        </View>
+
+        <View style={[styles.monthPickerPanel, !isWide && styles.monthPickerPanelCompact]}>
+          <View style={styles.monthPickerHeader}>
+            <Text style={styles.chartToolbarLabel}>Month / Year</Text>
+            {isLoadingMonth ? <ActivityIndicator size="small" color={palette.teal600} /> : null}
+          </View>
+          <View style={styles.yearPickerRow}>
+            <Pressable
+              onPress={() => changeYear(-1)}
+              disabled={isLoadingMonth}
+              accessibilityLabel="Previous daily production year"
+              style={({ pressed }) => [
+                styles.zoomButton,
+                pressed && !isLoadingMonth ? styles.pressed : null,
+                isLoadingMonth ? styles.zoomButtonDisabled : null,
+              ]}
+            >
+              <Ionicons name="chevron-back" size={15} color={palette.ink900} />
+            </Pressable>
+            <Text style={styles.yearPickerValue}>{selectedYear}</Text>
+            <Pressable
+              onPress={() => changeYear(1)}
+              disabled={isLoadingMonth}
+              accessibilityLabel="Next daily production year"
+              style={({ pressed }) => [
+                styles.zoomButton,
+                pressed && !isLoadingMonth ? styles.pressed : null,
+                isLoadingMonth ? styles.zoomButtonDisabled : null,
+              ]}
+            >
+              <Ionicons name="chevron-forward" size={15} color={palette.ink900} />
+            </Pressable>
+          </View>
+          <View style={styles.monthPickerGrid}>
+            {MONTH_PICKER_LABELS.map((label, monthIndex) => {
+              const isSelected = monthIndex === selectedMonthIndex;
+
+              return (
+                <Pressable
+                  key={label}
+                  onPress={() => selectMonth(monthIndex)}
+                  disabled={isLoadingMonth || isSelected}
+                  accessibilityLabel={`Show ${label} ${selectedYear} daily production`}
+                  style={({ pressed }) => [
+                    styles.monthPickerChip,
+                    isSelected ? styles.monthPickerChipActive : null,
+                    pressed && !isSelected && !isLoadingMonth ? styles.pressed : null,
+                    isLoadingMonth && !isSelected ? styles.zoomButtonDisabled : null,
+                  ]}
+                >
+                  <Text style={[styles.monthPickerChipText, isSelected ? styles.monthPickerChipTextActive : null]}>
+                    {label}
+                  </Text>
+                </Pressable>
+              );
+            })}
           </View>
         </View>
 
@@ -1160,12 +1423,9 @@ function DailyProductionCard({ dailyProduction, palette, isDark, isWide, screenW
         </View>
       </View>
 
-      <View style={styles.dailyChartTitleWrap}>
-        <Text style={styles.dailyChartTitle}>{dailyProduction?.monthLabel || 'Current Month'} Production</Text>
-      </View>
-
-      <View style={[styles.productionChart, styles.dailyProductionChart]}>
+      <View style={styles.productionChart}>
         <BarChart
+          key={dailyChartKey}
           data={chartData}
           width={chartViewportWidth}
           height={chartHeight}
@@ -1189,18 +1449,22 @@ function DailyProductionCard({ dailyProduction, palette, isDark, isWide, screenW
           rulesColor={palette.line}
           rulesThickness={1}
           yAxisTextStyle={styles.chartAxisLabel}
-          xAxisLabelTextStyle={styles.dailyChartDayLabel}
+          xAxisLabelTextStyle={styles.chartMonthLabel}
           yAxisLabelWidth={56}
           xAxisTextNumberOfLines={1}
-          labelsExtraHeight={52}
-          labelsDistanceFromXaxis={8}
-          rotateLabel
+          labelsExtraHeight={28}
           formatYLabel={(value) => formatNumber(value, 0)}
           disableScroll={false}
           nestedScrollEnabled
           showScrollIndicator
           indicatorColor={isDark ? 'white' : 'black'}
         />
+        {isLoadingMonth ? (
+          <View style={styles.chartLoadingOverlay} pointerEvents="none">
+            <ActivityIndicator size="small" color={palette.teal600} />
+            <Text style={styles.chartLoadingText}>Loading {createMonthYearLabel(selectedMonthDate)}</Text>
+          </View>
+        ) : null}
       </View>
 
       <ChartValueDetails selected={selectedBar} styles={styles} />
@@ -1213,7 +1477,7 @@ function DailyProductionCard({ dailyProduction, palette, isDark, isWide, screenW
       </View>
 
       {!hasData ? (
-        <MessageBanner tone="info">Daily production will appear here after current-month totalizer values are saved.</MessageBanner>
+        <MessageBanner tone="info">Daily production will appear here after records are available for the selected month.</MessageBanner>
       ) : null}
     </Card>
   );
@@ -1222,16 +1486,23 @@ function DailyProductionCard({ dailyProduction, palette, isDark, isWide, screenW
 export default function OfficeGraphsScreen({ navigation }) {
   const { palette, isDark } = useTheme();
   const { profile } = useAuth();
-  const styles = useMemo(() => createStyles(palette, isDark), [palette, isDark]);
   const { width } = useWindowDimensions();
+  const responsiveMetrics = useMemo(() => getResponsiveMetrics(width), [width]);
+  const styles = useMemo(() => createStyles(palette, isDark, responsiveMetrics), [palette, isDark, responsiveMetrics]);
   const isWide = width >= 980;
   const useTwoColumnCharts = width >= 980;
-  const chartCardWidth = useTwoColumnCharts ? Math.floor((width - 44) / 2) : width;
+  const shellContentWidth = Math.max(
+    320,
+    Math.min(width, responsiveMetrics.contentMaxWidth || width) - (responsiveMetrics.contentPadding * 2)
+  );
+  const chartCardWidth = useTwoColumnCharts ? Math.floor((shellContentWidth - 12) / 2) : shellContentWidth;
   const [monthlyProduction, setMonthlyProduction] = useState({
     totalProduction: 0,
     averageProduction: 0,
     rows: [],
   });
+  const [monthlyChartsYear, setMonthlyChartsYear] = useState(() => new Date().getFullYear());
+  const [monthlyChartsLoading, setMonthlyChartsLoading] = useState(false);
   const [monthlyPowerConsumption, setMonthlyPowerConsumption] = useState({
     totalPower: 0,
     rows: [],
@@ -1246,6 +1517,11 @@ export default function OfficeGraphsScreen({ navigation }) {
     totalProduction: 0,
     rows: [],
   });
+  const [dailyProductionMonth, setDailyProductionMonth] = useState(() => {
+    const now = new Date();
+    return new Date(now.getFullYear(), now.getMonth(), 1);
+  });
+  const [dailyProductionLoading, setDailyProductionLoading] = useState(false);
   const [loading, setLoading] = useState(true);
   const [exportingFormat, setExportingFormat] = useState('');
   const [message, setMessage] = useState('');
@@ -1259,10 +1535,19 @@ export default function OfficeGraphsScreen({ navigation }) {
 
     try {
       const snapshot = await getOfficeDashboardSnapshot();
-      setMonthlyProduction(snapshot.monthlyProduction);
-      setDailyProduction(snapshot.dailyProduction || { monthLabel: '', totalProduction: 0, rows: [] });
-      setMonthlyChemicalUsage(snapshot.monthlyChemicalUsage || { totalChlorine: 0, totalPeroxide: 0, rows: [] });
-      setMonthlyPowerConsumption(snapshot.monthlyPowerConsumption || { totalPower: 0, rows: [] });
+      const selectedMonthlyAnalytics = await getMonthlyAnalyticsForYear({ year: monthlyChartsYear });
+      const now = new Date();
+      const selectedDailyProduction =
+        dailyProductionMonth.getFullYear() === now.getFullYear() && dailyProductionMonth.getMonth() === now.getMonth()
+          ? snapshot.dailyProduction
+          : await getDailyProductionForMonth({
+              year: dailyProductionMonth.getFullYear(),
+              monthIndex: dailyProductionMonth.getMonth(),
+            });
+      setMonthlyProduction(selectedMonthlyAnalytics.monthlyProduction || snapshot.monthlyProduction);
+      setDailyProduction(selectedDailyProduction || { monthLabel: '', totalProduction: 0, rows: [] });
+      setMonthlyChemicalUsage(selectedMonthlyAnalytics.monthlyChemicalUsage || snapshot.monthlyChemicalUsage || { totalChlorine: 0, totalPeroxide: 0, rows: [] });
+      setMonthlyPowerConsumption(selectedMonthlyAnalytics.monthlyPowerConsumption || snapshot.monthlyPowerConsumption || { totalPower: 0, rows: [] });
       setTone('success');
       setMessage('Dashboard graphs are synced with the live database.');
     } catch (error) {
@@ -1272,6 +1557,56 @@ export default function OfficeGraphsScreen({ navigation }) {
       if (!silent) {
         setLoading(false);
       }
+    }
+  }
+
+  async function handleChangeDailyProductionMonth(nextDate) {
+    const nextMonth = new Date(nextDate.getFullYear(), nextDate.getMonth(), 1);
+    setDailyProductionMonth(nextMonth);
+    setDailyProduction(createDailyProductionPlaceholder(nextMonth));
+    setDailyProductionLoading(true);
+
+    try {
+      const nextDailyProduction = await getDailyProductionForMonth({
+        year: nextMonth.getFullYear(),
+        monthIndex: nextMonth.getMonth(),
+      });
+      setDailyProduction(nextDailyProduction);
+      setTone('success');
+      setMessage(`Daily production is showing ${nextDailyProduction.monthLabel}.`);
+    } catch (error) {
+      setTone('error');
+      setMessage(error.message || 'Failed to load daily production for the selected month.');
+    } finally {
+      setDailyProductionLoading(false);
+    }
+  }
+
+  async function handleChangeMonthlyChartsYear(nextYear) {
+    const parsedYear = Number(nextYear);
+    if (!Number.isInteger(parsedYear)) {
+      return;
+    }
+
+    const placeholder = createMonthlyAnalyticsPlaceholder(parsedYear);
+    setMonthlyChartsYear(parsedYear);
+    setMonthlyProduction(placeholder.monthlyProduction);
+    setMonthlyPowerConsumption(placeholder.monthlyPowerConsumption);
+    setMonthlyChemicalUsage(placeholder.monthlyChemicalUsage);
+    setMonthlyChartsLoading(true);
+
+    try {
+      const nextAnalytics = await getMonthlyAnalyticsForYear({ year: parsedYear });
+      setMonthlyProduction(nextAnalytics.monthlyProduction);
+      setMonthlyPowerConsumption(nextAnalytics.monthlyPowerConsumption);
+      setMonthlyChemicalUsage(nextAnalytics.monthlyChemicalUsage);
+      setTone('success');
+      setMessage(`Monthly charts are showing ${parsedYear}.`);
+    } catch (error) {
+      setTone('error');
+      setMessage(error.message || 'Failed to load monthly charts for the selected year.');
+    } finally {
+      setMonthlyChartsLoading(false);
     }
   }
 
@@ -1466,6 +1801,9 @@ export default function OfficeGraphsScreen({ navigation }) {
             screenWidth={chartCardWidth}
             styles={styles}
             cardStyle={useTwoColumnCharts ? styles.chartGridCard : null}
+            selectedYear={monthlyChartsYear}
+            onChangeYear={handleChangeMonthlyChartsYear}
+            isLoadingYear={monthlyChartsLoading}
           />
           <DailyProductionCard
             dailyProduction={dailyProduction}
@@ -1475,6 +1813,9 @@ export default function OfficeGraphsScreen({ navigation }) {
             screenWidth={chartCardWidth}
             styles={styles}
             cardStyle={useTwoColumnCharts ? styles.chartGridCard : null}
+            selectedMonthDate={dailyProductionMonth}
+            onChangeMonth={handleChangeDailyProductionMonth}
+            isLoadingMonth={dailyProductionLoading}
           />
           <MonthlyPowerConsumptionCard
             monthlyPowerConsumption={monthlyPowerConsumption}
@@ -1484,6 +1825,9 @@ export default function OfficeGraphsScreen({ navigation }) {
             screenWidth={chartCardWidth}
             styles={styles}
             cardStyle={useTwoColumnCharts ? styles.chartGridCard : null}
+            selectedYear={monthlyChartsYear}
+            onChangeYear={handleChangeMonthlyChartsYear}
+            isLoadingYear={monthlyChartsLoading}
           />
           <MonthlyChemicalUsageCard
             monthlyChemicalUsage={monthlyChemicalUsage}
@@ -1493,6 +1837,9 @@ export default function OfficeGraphsScreen({ navigation }) {
             screenWidth={chartCardWidth}
             styles={styles}
             cardStyle={useTwoColumnCharts ? styles.chartGridCard : null}
+            selectedYear={monthlyChartsYear}
+            onChangeYear={handleChangeMonthlyChartsYear}
+            isLoadingYear={monthlyChartsLoading}
           />
         </View>
       )}
@@ -1500,8 +1847,8 @@ export default function OfficeGraphsScreen({ navigation }) {
   );
 }
 
-function createStyles(palette, isDark) {
-  return StyleSheet.create({
+function createStyles(palette, isDark, responsiveMetrics) {
+  return StyleSheet.create(scaleStyleDefinitions({
     topPillRow: {
       flexDirection: 'row',
       flexWrap: 'wrap',
@@ -1584,10 +1931,12 @@ function createStyles(palette, isDark) {
       paddingVertical: 40,
     },
     chartGrid: {
+      width: '100%',
       flexDirection: 'row',
       flexWrap: 'wrap',
       gap: 12,
       alignItems: 'stretch',
+      justifyContent: 'center',
     },
     chartGridCard: {
       flexBasis: '48%',
@@ -1596,6 +1945,7 @@ function createStyles(palette, isDark) {
       minWidth: 0,
     },
     panelCard: {
+      width: '100%',
       gap: 12,
       padding: 12,
     },
@@ -1649,7 +1999,7 @@ function createStyles(palette, isDark) {
       borderRadius: 8,
     },
     skeletonChartAreaTall: {
-      minHeight: 360,
+      minHeight: CHART_CONTAINER_MIN_HEIGHT,
     },
     skeletonAxisColumn: {
       width: 36,
@@ -1752,16 +2102,6 @@ function createStyles(palette, isDark) {
     chartMetaRowCompact: {
       flexDirection: 'column',
     },
-    chemicalSummaryTotals: {
-      flex: 1,
-      flexDirection: 'row',
-      gap: 8,
-      minWidth: 0,
-    },
-    chemicalSummaryTotalsCompact: {
-      width: '100%',
-      flexDirection: 'column',
-    },
     productionSummaryPill: {
       position: 'relative',
       overflow: 'hidden',
@@ -1788,17 +2128,6 @@ function createStyles(palette, isDark) {
     productionSummaryPillWide: {
       maxWidth: 360,
     },
-    chemicalSummaryPill: {
-      flex: 1,
-      maxWidth: undefined,
-      gap: 7,
-      paddingLeft: 12,
-      paddingRight: 8,
-    },
-    chemicalSummaryValue: {
-      minWidth: 0,
-      flexShrink: 1,
-    },
     productionSummaryAccent: {
       position: 'absolute',
       left: 0,
@@ -1806,12 +2135,6 @@ function createStyles(palette, isDark) {
       bottom: 0,
       width: 5,
       backgroundColor: palette.teal600,
-    },
-    chemicalSummaryAccentChlorine: {
-      backgroundColor: isDark ? '#34BFA3' : '#0F8F7C',
-    },
-    chemicalSummaryAccentPeroxide: {
-      backgroundColor: isDark ? '#F6C85F' : '#E7A321',
     },
     productionSummaryIcon: {
       width: 38,
@@ -1822,14 +2145,6 @@ function createStyles(palette, isDark) {
       borderColor: isDark ? '#26786F' : '#9ADBD5',
       backgroundColor: isDark ? '#0E3A37' : '#DDF7F4',
       borderRadius: 8,
-    },
-    chemicalSummaryIconChlorine: {
-      borderColor: isDark ? '#26786F' : '#9ADBD5',
-      backgroundColor: isDark ? '#0E3A37' : '#DDF7F4',
-    },
-    chemicalSummaryIconPeroxide: {
-      borderColor: isDark ? '#8F6B1A' : '#F4D78A',
-      backgroundColor: isDark ? '#3B2D12' : '#FFF7DF',
     },
     productionSummaryCopy: {
       flex: 1,
@@ -1869,6 +2184,86 @@ function createStyles(palette, isDark) {
     },
     chartToolbarCompact: {
       width: '100%',
+    },
+    monthPickerPanel: {
+      flexGrow: 1,
+      flexShrink: 1,
+      minWidth: 260,
+      minHeight: 116,
+      borderWidth: 1,
+      borderColor: palette.line,
+      backgroundColor: isDark ? '#101D2A' : '#F9FCFF',
+      paddingHorizontal: 10,
+      paddingVertical: 10,
+      borderRadius: 8,
+      gap: 8,
+    },
+    monthPickerPanelCompact: {
+      width: '100%',
+    },
+    yearPickerPanel: {
+      flexGrow: 1,
+      flexShrink: 1,
+      minWidth: 190,
+      minHeight: 54,
+      borderWidth: 1,
+      borderColor: palette.line,
+      backgroundColor: isDark ? '#101D2A' : '#F9FCFF',
+      paddingHorizontal: 10,
+      paddingVertical: 10,
+      borderRadius: 8,
+      gap: 6,
+    },
+    yearPickerPanelCompact: {
+      width: '100%',
+    },
+    monthPickerHeader: {
+      minHeight: 18,
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      gap: 8,
+    },
+    yearPickerRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'center',
+      gap: 8,
+    },
+    yearPickerValue: {
+      minWidth: 70,
+      color: palette.ink900,
+      fontSize: 16,
+      fontWeight: '900',
+      textAlign: 'center',
+    },
+    monthPickerGrid: {
+      flexDirection: 'row',
+      flexWrap: 'wrap',
+      justifyContent: 'center',
+      gap: 6,
+    },
+    monthPickerChip: {
+      width: 45,
+      height: 28,
+      alignItems: 'center',
+      justifyContent: 'center',
+      borderWidth: 1,
+      borderColor: palette.line,
+      backgroundColor: isDark ? '#152636' : '#F7FBFF',
+      borderRadius: 8,
+    },
+    monthPickerChipActive: {
+      borderColor: isDark ? '#1A655E' : '#B4E5DE',
+      backgroundColor: isDark ? '#11312D' : '#E5F5F3',
+    },
+    monthPickerChipText: {
+      color: palette.ink700,
+      fontSize: 10,
+      fontWeight: '900',
+    },
+    monthPickerChipTextActive: {
+      color: palette.ink900,
     },
     chartToolbarLabel: {
       color: palette.ink700,
@@ -1917,7 +2312,9 @@ function createStyles(palette, isDark) {
     },
     productionChart: {
       overflow: 'hidden',
-      minHeight: 292,
+      position: 'relative',
+      alignItems: 'center',
+      minHeight: CHART_CONTAINER_MIN_HEIGHT,
       paddingTop: 20,
       paddingRight: 10,
       paddingBottom: 6,
@@ -1926,21 +2323,22 @@ function createStyles(palette, isDark) {
       backgroundColor: isDark ? '#0B1723' : '#FBFDFF',
       borderRadius: 8,
     },
-    dailyChartTitleWrap: {
+    chartLoadingOverlay: {
+      position: 'absolute',
+      left: 0,
+      right: 0,
+      top: 0,
+      bottom: 0,
       alignItems: 'center',
       justifyContent: 'center',
-      paddingVertical: 2,
+      gap: 8,
+      backgroundColor: isDark ? 'rgba(11, 23, 35, 0.78)' : 'rgba(251, 253, 255, 0.82)',
+      borderRadius: 8,
     },
-    dailyChartTitle: {
-      color: palette.ink900,
-      fontSize: 15,
+    chartLoadingText: {
+      color: palette.ink700,
+      fontSize: 11,
       fontWeight: '900',
-      textAlign: 'center',
-    },
-    dailyProductionChart: {
-      minHeight: 360,
-      paddingTop: 22,
-      paddingBottom: 10,
     },
     chartValueDetails: {
       gap: 8,
@@ -2056,29 +2454,6 @@ function createStyles(palette, isDark) {
       fontSize: 11,
       fontWeight: '900',
     },
-    chemicalChartPanel: {
-      gap: 8,
-    },
-    chemicalChartTitleRow: {
-      flexDirection: 'row',
-      flexWrap: 'wrap',
-      alignItems: 'center',
-      justifyContent: 'space-between',
-      gap: 8,
-    },
-    chemicalChartTitleWrap: {
-      flexDirection: 'row',
-      alignItems: 'center',
-      gap: 6,
-    },
-    chemicalChartTitle: {
-      color: palette.ink900,
-      fontSize: 13,
-      fontWeight: '900',
-    },
-    chemicalUsageChart: {
-      minHeight: 258,
-    },
     chartAxisLabel: {
       color: palette.ink500,
       fontSize: 9,
@@ -2166,5 +2541,16 @@ function createStyles(palette, isDark) {
       fontSize: 9,
       fontWeight: '800',
     },
-  });
+  }, responsiveMetrics, {
+    exclude: [
+      'chartGridCard.width',
+      'chartGridCard.flexBasis',
+      'skeletonFill.width',
+      'skeletonFillLarge.width',
+      'skeletonFillMedium.width',
+      'skeletonFillShort.width',
+      'exportMenuPanel.width',
+    ],
+  }));
 }
+

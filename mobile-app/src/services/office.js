@@ -4,8 +4,12 @@ import {
   buildMonthlyChemicalUsage,
   buildMonthlyProduction,
   buildMonthlyPowerConsumption,
+  createDayKey,
   startOfMonthlyProductionSourceIso,
 } from '../utils/production';
+
+const DAILY_SUMMARY_SELECT =
+  'id, site_id, summary_date, source, source_file, production_m3, power_kwh, chlorine_kg, peroxide_liters, site:sites(id, name, type)';
 
 function requireSupabase() {
   if (!supabase) {
@@ -48,6 +52,128 @@ function sortByCreatedAtDesc(a, b) {
   return new Date(b.created_at || 0).getTime() - new Date(a.created_at || 0).getTime();
 }
 
+function getMonthProductionRange({ year, monthIndex }) {
+  const today = new Date();
+  const monthStart = new Date(year, monthIndex, 1);
+  const monthEnd = new Date(year, monthIndex + 1, 0, 23, 59, 59, 999);
+  const chartEnd = monthStart > today ? monthEnd : monthEnd > today ? today : monthEnd;
+  const previousDayStart = new Date(year, monthIndex, 0);
+  const nextMonthStart = new Date(year, monthIndex + 1, 1);
+
+  return {
+    monthStart,
+    chartEnd,
+    readingFromIso: previousDayStart.toISOString(),
+    readingToIso: nextMonthStart.toISOString(),
+    summaryFromDate: createDayKey(monthStart),
+    summaryToDate: createDayKey(monthEnd),
+  };
+}
+
+function getYearAnalyticsRange(year) {
+  const yearStart = new Date(year, 0, 1);
+  const yearEnd = new Date(year, 11, 31, 23, 59, 59, 999);
+  const previousDayStart = new Date(year, 0, 0);
+  const nextYearStart = new Date(year + 1, 0, 1);
+
+  return {
+    chartEnd: yearEnd,
+    readingFromIso: previousDayStart.toISOString(),
+    readingToIso: nextYearStart.toISOString(),
+    summaryFromDate: createDayKey(yearStart),
+    summaryToDate: createDayKey(yearEnd),
+  };
+}
+
+export async function getMonthlyAnalyticsForYear({ year }) {
+  requireSupabase();
+
+  const parsedYear = Number(year);
+
+  if (!Number.isInteger(parsedYear) || parsedYear < 1900 || parsedYear > 9999) {
+    throw new Error('Choose a valid year.');
+  }
+
+  const range = getYearAnalyticsRange(parsedYear);
+  const [chlorinationReadingsResult, deepwellReadingsResult, summariesResult] = await Promise.all([
+    supabase
+      .from('chlorination_readings')
+      .select('id, site_id, status, created_at, reading_datetime, slot_datetime, totalizer, chlorine_consumed, peroxide_consumption, chlorination_power_kwh')
+      .gte('reading_datetime', range.readingFromIso)
+      .lt('reading_datetime', range.readingToIso)
+      .order('reading_datetime', { ascending: true }),
+    supabase
+      .from('deepwell_readings')
+      .select('id, site_id, status, created_at, reading_datetime, slot_datetime, power_kwh_shift')
+      .gte('reading_datetime', range.readingFromIso)
+      .lt('reading_datetime', range.readingToIso)
+      .order('reading_datetime', { ascending: true }),
+    supabase
+      .from('daily_site_summaries')
+      .select(DAILY_SUMMARY_SELECT)
+      .gte('summary_date', range.summaryFromDate)
+      .lte('summary_date', range.summaryToDate)
+      .order('summary_date', { ascending: true }),
+  ]);
+
+  throwIfError(chlorinationReadingsResult, 'Failed to load selected year chlorination readings.');
+  throwIfError(deepwellReadingsResult, 'Failed to load selected year deepwell readings.');
+  throwIfError(summariesResult, 'Failed to load selected year daily summaries.');
+
+  const dailySummaries = summariesResult.data ?? [];
+  const chlorinationReadings = chlorinationReadingsResult.data ?? [];
+  const deepwellReadings = deepwellReadingsResult.data ?? [];
+  const options = {
+    now: range.chartEnd,
+    monthCount: 12,
+    dailySummaries,
+  };
+
+  return {
+    monthlyProduction: buildMonthlyProduction(chlorinationReadings, options),
+    monthlyChemicalUsage: buildMonthlyChemicalUsage(chlorinationReadings, options),
+    monthlyPowerConsumption: buildMonthlyPowerConsumption({
+      chlorinationReadings,
+      deepwellReadings,
+    }, options),
+  };
+}
+
+export async function getDailyProductionForMonth({ year, monthIndex }) {
+  requireSupabase();
+
+  const parsedYear = Number(year);
+  const parsedMonthIndex = Number(monthIndex);
+
+  if (!Number.isInteger(parsedYear) || !Number.isInteger(parsedMonthIndex) || parsedMonthIndex < 0 || parsedMonthIndex > 11) {
+    throw new Error('Choose a valid month and year.');
+  }
+
+  const range = getMonthProductionRange({ year: parsedYear, monthIndex: parsedMonthIndex });
+  const [readingsResult, summariesResult] = await Promise.all([
+    supabase
+      .from('chlorination_readings')
+      .select('id, site_id, status, created_at, reading_datetime, slot_datetime, totalizer')
+      .gte('reading_datetime', range.readingFromIso)
+      .lt('reading_datetime', range.readingToIso)
+      .order('reading_datetime', { ascending: true }),
+    supabase
+      .from('daily_site_summaries')
+      .select(DAILY_SUMMARY_SELECT)
+      .gte('summary_date', range.summaryFromDate)
+      .lte('summary_date', range.summaryToDate)
+      .order('summary_date', { ascending: true }),
+  ]);
+
+  throwIfError(readingsResult, 'Failed to load selected month production readings.');
+  throwIfError(summariesResult, 'Failed to load selected month daily summaries.');
+
+  return buildDailyProduction(readingsResult.data ?? [], {
+    now: range.chartEnd,
+    dailySummaries: summariesResult.data ?? [],
+  });
+}
+
 export async function getOfficeDashboardSnapshot({ limit = 12 } = {}) {
   requireSupabase();
 
@@ -68,6 +194,7 @@ export async function getOfficeDashboardSnapshot({ limit = 12 } = {}) {
     profilesResult,
     monthlyChlorinationReadingsResult,
     monthlyDeepwellReadingsResult,
+    dailySummariesResult,
   ] = await Promise.all([
     supabase
       .from('profiles')
@@ -144,6 +271,11 @@ export async function getOfficeDashboardSnapshot({ limit = 12 } = {}) {
       .select('id, site_id, status, created_at, reading_datetime, slot_datetime, power_kwh_shift')
       .gte('reading_datetime', startOfMonthlyProductionSourceIso())
       .order('reading_datetime', { ascending: true }),
+    supabase
+      .from('daily_site_summaries')
+      .select(DAILY_SUMMARY_SELECT)
+      .gte('summary_date', startOfMonthlyProductionSourceIso().slice(0, 10))
+      .order('summary_date', { ascending: true }),
   ]);
 
   throwIfError(pendingApprovalsResult, 'Failed to load pending approvals.');
@@ -159,6 +291,7 @@ export async function getOfficeDashboardSnapshot({ limit = 12 } = {}) {
   throwIfError(profilesResult, 'Failed to load account roles.');
   throwIfError(monthlyChlorinationReadingsResult, 'Failed to load monthly chlorination production.');
   throwIfError(monthlyDeepwellReadingsResult, 'Failed to load monthly deepwell power consumption.');
+  throwIfError(dailySummariesResult, 'Failed to load historical daily summaries.');
 
   const recentReadings = [
     ...(recentChlorinationReadingsResult.data ?? []).map((row) => normalizeOfficeReading(row, 'CHLORINATION')),
@@ -185,12 +318,20 @@ export async function getOfficeDashboardSnapshot({ limit = 12 } = {}) {
     sites: sitesResult.data ?? [],
     todaySlotReadings,
     profiles: profilesResult.data ?? [],
-    monthlyProduction: buildMonthlyProduction(monthlyChlorinationReadingsResult.data ?? []),
-    dailyProduction: buildDailyProduction(monthlyChlorinationReadingsResult.data ?? []),
-    monthlyChemicalUsage: buildMonthlyChemicalUsage(monthlyChlorinationReadingsResult.data ?? []),
+    monthlyProduction: buildMonthlyProduction(monthlyChlorinationReadingsResult.data ?? [], {
+      dailySummaries: dailySummariesResult.data ?? [],
+    }),
+    dailyProduction: buildDailyProduction(monthlyChlorinationReadingsResult.data ?? [], {
+      dailySummaries: dailySummariesResult.data ?? [],
+    }),
+    monthlyChemicalUsage: buildMonthlyChemicalUsage(monthlyChlorinationReadingsResult.data ?? [], {
+      dailySummaries: dailySummariesResult.data ?? [],
+    }),
     monthlyPowerConsumption: buildMonthlyPowerConsumption({
       chlorinationReadings: monthlyChlorinationReadingsResult.data ?? [],
       deepwellReadings: monthlyDeepwellReadingsResult.data ?? [],
+    }, {
+      dailySummaries: dailySummariesResult.data ?? [],
     }),
   };
 }

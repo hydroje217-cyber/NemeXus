@@ -89,3 +89,83 @@ export const themes = {
 
 export const palette = lightPalette;
 export const shadows = themes.light.shadows;
+
+export function getResponsiveMetrics(width = 390) {
+  const screenWidth = Number.isFinite(width) ? width : 390;
+  const isTablet = screenWidth >= 700;
+  const isLargeTablet = screenWidth >= 980;
+  const scale = isLargeTablet ? 1.24 : isTablet ? 1.14 : 1;
+
+  return {
+    width: screenWidth,
+    isTablet,
+    isLargeTablet,
+    scale,
+    contentPadding: isLargeTablet ? 28 : isTablet ? 24 : 16,
+    contentGap: isTablet ? 18 : 14,
+    contentMaxWidth: isLargeTablet ? 1180 : isTablet ? 940 : undefined,
+  };
+}
+
+const SCALABLE_STYLE_KEYS = new Set([
+  'fontSize',
+  'lineHeight',
+  'letterSpacing',
+  'gap',
+  'rowGap',
+  'columnGap',
+  'padding',
+  'paddingTop',
+  'paddingRight',
+  'paddingBottom',
+  'paddingLeft',
+  'paddingHorizontal',
+  'paddingVertical',
+  'margin',
+  'marginTop',
+  'marginRight',
+  'marginBottom',
+  'marginLeft',
+  'marginHorizontal',
+  'marginVertical',
+  'borderRadius',
+  'minHeight',
+  'minWidth',
+]);
+
+export function responsiveValue(value, metrics, ratio = 1) {
+  if (typeof value !== 'number') {
+    return value;
+  }
+
+  return Math.round(value * metrics.scale * ratio);
+}
+
+export function scaleStyleDefinitions(definitions, metrics, options = {}) {
+  const excludedKeys = new Set(options.exclude || []);
+  const scaledKeys = options.keys || SCALABLE_STYLE_KEYS;
+  const iconScaleKeys = new Set(options.iconKeys || ['width', 'height']);
+
+  return Object.fromEntries(
+    Object.entries(definitions).map(([styleName, style]) => [
+      styleName,
+      Object.fromEntries(
+        Object.entries(style).map(([key, value]) => {
+          if (excludedKeys.has(`${styleName}.${key}`) || excludedKeys.has(key)) {
+            return [key, value];
+          }
+
+          if (scaledKeys.has(key)) {
+            return [key, responsiveValue(value, metrics)];
+          }
+
+          if (iconScaleKeys.has(key) && typeof value === 'number' && value <= 260) {
+            return [key, responsiveValue(value, metrics)];
+          }
+
+          return [key, value];
+        })
+      ),
+    ])
+  );
+}

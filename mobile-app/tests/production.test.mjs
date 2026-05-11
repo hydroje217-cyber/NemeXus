@@ -14,6 +14,7 @@ try {
 
   const {
     aggregateDailyRows,
+    buildDailyPowerConsumption,
     buildDailyProduction,
     buildDailyTotalizerRows,
     buildMonthlyChemicalUsage,
@@ -159,6 +160,100 @@ try {
   assert.equal(chemicalUsage.rows[0].totalUsage, 19.75);
   assert.equal(chemicalUsage.totalChlorine, 15);
   assert.equal(chemicalUsage.totalPeroxide, 4.75);
+
+  const historicalSummaries = [
+    {
+      summary_date: '2026-02-01',
+      production_m3: 999,
+      power_kwh: 70,
+      chlorine_kg: 3,
+      peroxide_liters: 1,
+      site: { type: 'CHLORINATION' },
+    },
+    {
+      summary_date: '2026-02-03',
+      production_m3: 65,
+      power_kwh: 80,
+      chlorine_kg: 5,
+      peroxide_liters: 2,
+      site: { type: 'CHLORINATION' },
+    },
+    {
+      summary_date: '2026-02-03',
+      power_kwh: 125,
+      site: { type: 'DEEPWELL' },
+    },
+  ];
+
+  const productionWithSummaries = buildDailyProduction(readings, {
+    now: new Date('2026-02-03T12:00:00.000Z'),
+    dailySummaries: historicalSummaries,
+  });
+
+  assert.deepEqual(
+    productionWithSummaries.rows.map((row) => [row.date, row.production]),
+    [
+      ['2026-02-03', 65],
+      ['2026-02-02', 50],
+      ['2026-02-01', 80],
+    ]
+  );
+
+  const monthlyProductionWithSummaries = buildMonthlyProduction(readings, {
+    now: new Date('2026-02-28T12:00:00.000Z'),
+    monthCount: 2,
+    dailySummaries: historicalSummaries,
+  });
+
+  assert.equal(monthlyProductionWithSummaries.rows[0].production, 195);
+  assert.equal(monthlyProductionWithSummaries.totalProduction, 195);
+
+  const monthlyPowerWithSummaries = buildMonthlyPowerConsumption(
+    {
+      chlorinationReadings: [
+        { slot_datetime: '2026-02-01T23:30:00.000Z', chlorination_power_kwh: 40 },
+      ],
+      deepwellReadings: [],
+    },
+    {
+      now: new Date('2026-02-28T12:00:00.000Z'),
+      monthCount: 1,
+      dailySummaries: historicalSummaries,
+    }
+  );
+
+  assert.equal(monthlyPowerWithSummaries.rows[0].chlorinationPower, 120);
+  assert.equal(monthlyPowerWithSummaries.rows[0].deepwellPower, 125);
+  assert.equal(monthlyPowerWithSummaries.totalPower, 245);
+
+  const dailyPowerWithSummaries = buildDailyPowerConsumption(
+    {
+      chlorinationReadings: [],
+      deepwellReadings: [],
+    },
+    {
+      now: new Date('2026-02-03T12:00:00.000Z'),
+      dailySummaries: historicalSummaries,
+    }
+  );
+
+  assert.deepEqual(
+    dailyPowerWithSummaries.rows.map((row) => [row.date, row.chlorinationPower, row.deepwellPower]),
+    [
+      ['2026-02-03', 80, 125],
+      ['2026-02-02', 0, 0],
+      ['2026-02-01', 70, 0],
+    ]
+  );
+
+  const chemicalUsageWithSummaries = buildMonthlyChemicalUsage([], {
+    now: new Date('2026-02-28T12:00:00.000Z'),
+    monthCount: 1,
+    dailySummaries: historicalSummaries,
+  });
+
+  assert.equal(chemicalUsageWithSummaries.rows[0].chlorineUsage, 8);
+  assert.equal(chemicalUsageWithSummaries.rows[0].peroxideUsage, 3);
 
   assert.equal(
     startOfMonthlyProductionSourceIso({

@@ -1,8 +1,9 @@
 import { forwardRef, useContext, useImperativeHandle, useMemo, useRef, useState } from 'react';
-import { Animated, StyleSheet, Text, TextInput, View } from 'react-native';
+import { Animated, StyleSheet, Text, TextInput, View, useWindowDimensions } from 'react-native';
 import Ionicons from '@expo/vector-icons/Ionicons';
 import { KeyboardScrollContext } from './ScreenShell';
 import { useTheme } from '../context/ThemeContext';
+import { getResponsiveMetrics, scaleStyleDefinitions } from '../theme';
 
 const FormField = forwardRef(function FormField({
   label,
@@ -26,7 +27,9 @@ const FormField = forwardRef(function FormField({
   errorText = '',
 }, ref) {
   const { palette, isDark } = useTheme();
-  const styles = useMemo(() => createStyles(palette, isDark), [palette, isDark]);
+  const { width } = useWindowDimensions();
+  const metrics = useMemo(() => getResponsiveMetrics(width), [width]);
+  const styles = useMemo(() => createStyles(palette, isDark, metrics), [palette, isDark, metrics]);
   const resolvedBlurOnSubmit = blurOnSubmit ?? (returnKeyType === 'next' ? false : undefined);
   const [focused, setFocused] = useState(false);
   const focusAnim = useRef(new Animated.Value(0)).current;
@@ -140,8 +143,8 @@ const FormField = forwardRef(function FormField({
 
 export default FormField;
 
-function createStyles(palette, isDark) {
-  return StyleSheet.create({
+function createStyles(palette, isDark, metrics) {
+  return StyleSheet.create(scaleStyleDefinitions({
     wrapper: {
       gap: 8,
     },
@@ -235,5 +238,5 @@ function createStyles(palette, isDark) {
       fontWeight: '700',
       lineHeight: 16,
     },
-  });
+  }, metrics));
 }

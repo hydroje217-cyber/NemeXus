@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { ActivityIndicator, Pressable, StyleSheet, Text, View } from 'react-native';
+import { ActivityIndicator, Pressable, StyleSheet, Text, View, useWindowDimensions } from 'react-native';
 import Ionicons from '@expo/vector-icons/Ionicons';
 import Card from '../components/Card';
 import MessageBanner from '../components/MessageBanner';
@@ -7,6 +7,7 @@ import PrimaryButton from '../components/PrimaryButton';
 import ScreenShell from '../components/ScreenShell';
 import { useAuth } from '../context/AuthContext';
 import { useTheme } from '../context/ThemeContext';
+import { getResponsiveMetrics, scaleStyleDefinitions } from '../theme';
 import { getOfflineReadingCount, syncOfflineReadings } from '../services/offlineReadings';
 import { listAccessibleSites } from '../services/sites';
 
@@ -19,7 +20,9 @@ function getSiteDescription(type) {
 export default function SiteSelectionScreen({ navigation }) {
   const { profile, signOut } = useAuth();
   const { palette, isDark } = useTheme();
-  const styles = useMemo(() => createStyles(palette, isDark), [palette, isDark]);
+  const { width } = useWindowDimensions();
+  const responsiveMetrics = useMemo(() => getResponsiveMetrics(width), [width]);
+  const styles = useMemo(() => createStyles(palette, isDark, responsiveMetrics), [palette, isDark, responsiveMetrics]);
   const isPrivileged =
     profile?.role === 'admin' || profile?.role === 'supervisor' || profile?.role === 'manager';
   const [sites, setSites] = useState([]);
@@ -280,8 +283,8 @@ export default function SiteSelectionScreen({ navigation }) {
   );
 }
 
-function createStyles(palette, isDark) {
-  return StyleSheet.create({
+function createStyles(palette, isDark, responsiveMetrics) {
+  return StyleSheet.create(scaleStyleDefinitions({
     summaryCard: {
       gap: 12,
     },
@@ -532,5 +535,5 @@ function createStyles(palette, isDark) {
       fontSize: 12,
       lineHeight: 18,
     },
-  });
+  }, responsiveMetrics, { exclude: ['siteAccent.left', 'siteAccent.right'] }));
 }

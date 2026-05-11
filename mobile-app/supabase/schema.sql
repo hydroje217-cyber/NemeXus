@@ -114,6 +114,43 @@ create table if not exists public.deepwell_readings (
 create unique index if not exists deepwell_readings_site_slot_unique
 on public.deepwell_readings (site_id, slot_datetime);
 
+create table if not exists public.daily_site_summaries (
+  id uuid primary key default gen_random_uuid(),
+  site_id bigint not null references public.sites (id) on delete restrict,
+  summary_date date not null,
+  source text not null default 'excel_daily_report',
+  source_file text,
+  production_m3 numeric,
+  power_kwh numeric,
+  chlorine_kg numeric,
+  avg_flowrate_m3hr numeric,
+  avg_pressure_psi numeric,
+  avg_rc_ppm numeric,
+  avg_turbidity_ntu numeric,
+  avg_ph numeric,
+  avg_tds_ppm numeric,
+  peroxide_liters numeric,
+  operating_hours numeric,
+  scheduled_downtime_hours numeric,
+  unscheduled_downtime_hours numeric,
+  avg_upstream_pressure_psi numeric,
+  avg_downstream_pressure_psi numeric,
+  avg_vfd_frequency_hz numeric,
+  avg_voltage_l1_v numeric,
+  avg_voltage_l2_v numeric,
+  avg_voltage_l3_v numeric,
+  avg_amperage_a numeric,
+  created_at timestamptz not null default timezone('utc', now()),
+  updated_at timestamptz not null default timezone('utc', now()),
+  unique (site_id, summary_date)
+);
+
+create index if not exists daily_site_summaries_date_idx
+on public.daily_site_summaries (summary_date);
+
+create index if not exists daily_site_summaries_site_date_idx
+on public.daily_site_summaries (site_id, summary_date);
+
 create table if not exists public.reading_audit_log (
   id uuid primary key default gen_random_uuid(),
   reading_id uuid not null references public.readings (id) on delete cascade,
@@ -208,6 +245,11 @@ create trigger deepwell_readings_set_updated_at
 before update on public.deepwell_readings
 for each row execute procedure public.set_updated_at();
 
+drop trigger if exists daily_site_summaries_set_updated_at on public.daily_site_summaries;
+create trigger daily_site_summaries_set_updated_at
+before update on public.daily_site_summaries
+for each row execute procedure public.set_updated_at();
+
 create or replace function public.log_reading_change()
 returns trigger
 language plpgsql
@@ -244,6 +286,7 @@ alter table public.site_assignments enable row level security;
 alter table public.readings enable row level security;
 alter table public.chlorination_readings enable row level security;
 alter table public.deepwell_readings enable row level security;
+alter table public.daily_site_summaries enable row level security;
 alter table public.reading_audit_log enable row level security;
 
 do $$
@@ -543,6 +586,22 @@ drop policy if exists "deepwell readings admin update" on public.deepwell_readin
 create policy "deepwell readings admin update"
 on public.deepwell_readings
 for update
+using (public.current_role() in ('admin', 'supervisor', 'manager'))
+with check (public.current_role() in ('admin', 'supervisor', 'manager'));
+
+drop policy if exists "approved users can read daily site summaries" on public.daily_site_summaries;
+create policy "approved users can read daily site summaries"
+on public.daily_site_summaries
+for select
+using (
+  auth.uid() is not null
+  and public.is_approved_user()
+);
+
+drop policy if exists "office roles can manage daily site summaries" on public.daily_site_summaries;
+create policy "office roles can manage daily site summaries"
+on public.daily_site_summaries
+for all
 using (public.current_role() in ('admin', 'supervisor', 'manager'))
 with check (public.current_role() in ('admin', 'supervisor', 'manager'));
 

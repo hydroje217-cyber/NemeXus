@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { KeyboardAvoidingView, Modal, Platform, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { KeyboardAvoidingView, Modal, Platform, Pressable, ScrollView, StyleSheet, Text, View, useWindowDimensions } from 'react-native';
 import Ionicons from '@expo/vector-icons/Ionicons';
 import Card from '../components/Card';
 import FormField from '../components/FormField';
@@ -16,6 +16,7 @@ import {
 } from '../services/offlineReadings';
 import { createReading, getLatestReadingForSite, getReadingForSlot } from '../services/readings';
 import { parseNullableNumber } from '../utils/readings';
+import { getResponsiveMetrics, scaleStyleDefinitions } from '../theme';
 import { isShiftBatchEntryWindow, nextShiftBatchEntryText, shiftNameForSlot } from '../utils/shiftSchedule';
 import { formatTimestamp, roundDownTo30MinSlot } from '../utils/time';
 import LottieView from 'lottie-react-native';
@@ -102,7 +103,9 @@ const initialDeepwellState = {
 export default function SubmitReadingScreen({ navigation, site }) {
   const { profile } = useAuth();
   const { palette, isDark } = useTheme();
-  const styles = useMemo(() => createStyles(palette, isDark), [palette, isDark]);
+  const { width } = useWindowDimensions();
+  const responsiveMetrics = useMemo(() => getResponsiveMetrics(width), [width]);
+  const styles = useMemo(() => createStyles(palette, isDark, responsiveMetrics), [palette, isDark, responsiveMetrics]);
   const fieldRefs = useRef({});
   const screenScrollRef = useRef(null);
   const [remarks, setRemarks] = useState('');
@@ -1252,8 +1255,8 @@ export default function SubmitReadingScreen({ navigation, site }) {
   );
 }
 
-function createStyles(palette, isDark) {
-  return StyleSheet.create({
+function createStyles(palette, isDark, responsiveMetrics) {
+  return StyleSheet.create(scaleStyleDefinitions({
     keyboardWrap: {
       flex: 1,
     },
@@ -1590,5 +1593,7 @@ function createStyles(palette, isDark) {
       gap: 12,
       paddingBottom: 18,
     },
-  });
+  }, responsiveMetrics, {
+    exclude: ['successAnimationOverlay.flex', 'confirmOverlay.flex', 'confirmButtonRow.flexDirection'],
+  }));
 }
