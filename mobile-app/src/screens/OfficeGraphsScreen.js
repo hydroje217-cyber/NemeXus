@@ -349,6 +349,7 @@ function ChartValueDetails({ selected, styles }) {
 const MIN_CHART_ZOOM = 0.75;
 const MAX_CHART_ZOOM = 2;
 const CHART_ZOOM_STEP = 0.25;
+const TABLET_DEFAULT_CHART_ZOOM = 1.25;
 const CHART_HEIGHT_COMPACT = 230;
 const CHART_HEIGHT_WIDE = 270;
 const CHART_CONTAINER_MIN_HEIGHT = 292;
@@ -359,6 +360,24 @@ const MONTHLY_BASE_SPACING_WIDE = 42;
 const MONTHLY_CONTENT_WIDTH_COMPACT = 560;
 const MONTHLY_CONTENT_WIDTH_WIDE = 820;
 const MONTH_PICKER_LABELS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+const FULL_MONTH_PICKER_LABELS = [
+  'January',
+  'February',
+  'March',
+  'April',
+  'May',
+  'June',
+  'July',
+  'August',
+  'September',
+  'October',
+  'November',
+  'December',
+];
+
+function getDefaultChartZoom({ isWide, screenWidth }) {
+  return isWide || screenWidth >= 620 ? TABLET_DEFAULT_CHART_ZOOM : 1;
+}
 
 function createMonthYearLabel(date) {
   return date.toLocaleString('en-US', { month: 'long', year: 'numeric' });
@@ -391,8 +410,17 @@ function createDailyProductionPlaceholder(monthDate) {
   };
 }
 
+function visibleMonthlyIndexesForYear(year) {
+  const today = new Date();
+  const lastMonthIndex = year === today.getFullYear() ? today.getMonth() : 11;
+
+  return MONTH_PICKER_LABELS
+    .map((label, monthIndex) => ({ label, monthIndex }))
+    .filter((row) => row.monthIndex <= lastMonthIndex);
+}
+
 function createMonthlyRowsForYear(year) {
-  return MONTH_PICKER_LABELS.map((label, monthIndex) => ({
+  return visibleMonthlyIndexesForYear(year).map(({ label, monthIndex }) => ({
     key: `${year}-${String(monthIndex + 1).padStart(2, '0')}`,
     label: `${label}-${String(year).slice(-2)}`,
   })).reverse();
@@ -465,13 +493,16 @@ function MonthlyProductionCard({
   screenWidth,
   styles,
   cardStyle,
-  selectedYear,
-  onChangeYear,
-  isLoadingYear,
+  selectedYear = new Date().getFullYear(),
+  onChangeYear = () => {},
+  isLoadingYear = false,
 }) {
   const rows = monthlyProduction?.rows ?? [];
-  const [zoomLevel, setZoomLevel] = useState(1);
+  const defaultZoomLevel = getDefaultChartZoom({ isWide, screenWidth });
+  const [zoomLevel, setZoomLevel] = useState(defaultZoomLevel);
   const [selectedBar, setSelectedBar] = useState(null);
+  const stackYearZoomControls = screenWidth < 620;
+  const stackProductionKpi = screenWidth < 430;
   const totalProduction =
     monthlyProduction?.totalProduction ??
     rows.reduce((sum, row) => sum + (Number(row.production) || 0), 0);
@@ -509,8 +540,8 @@ function MonthlyProductionCard({
   };
   useEffect(() => {
     setSelectedBar(null);
-    setZoomLevel(1);
-  }, [selectedYear]);
+    setZoomLevel(defaultZoomLevel);
+  }, [selectedYear, defaultZoomLevel]);
   const chartData = rows.map((row) => {
     const production = Math.max(0, row.production || 0);
 
@@ -539,63 +570,68 @@ function MonthlyProductionCard({
 
   return (
     <Card style={[styles.panelCard, cardStyle]}>
-      <SectionHeader
-        title="Monthly Production"
-        iconName="bar-chart-outline"
-        iconColor={palette.teal600}
-        styles={styles}
-      />
-
-      <View style={[styles.chartMetaRow, !isWide && styles.chartMetaRowCompact]}>
-        <View style={[styles.productionSummaryPill, isWide && styles.productionSummaryPillWide]}>
-          <View style={styles.productionSummaryAccent} />
-          <View style={styles.productionSummaryIcon}>
-            <Ionicons name="analytics-outline" size={15} color={palette.teal600} />
+      <View style={[styles.chartAppHeader, stackYearZoomControls && styles.chartAppHeaderCompact]}>
+        <View style={styles.sectionTitleRow}>
+          <View style={styles.sectionIconWrap}>
+            <Ionicons name="bar-chart-outline" size={14} color={palette.teal600} />
           </View>
-          <View style={styles.productionSummaryCopy}>
-            <Text style={styles.productionSummaryLabel}>Total Production</Text>
-            <Text numberOfLines={1} adjustsFontSizeToFit style={styles.productionSummaryValue}>
-              {formatNumber(totalProduction)}
-            </Text>
-            <Text style={styles.productionSummaryHint}>{selectedYear}</Text>
-          </View>
+          <Text style={styles.sectionTitle}>Monthly Production</Text>
         </View>
 
-        <YearPickerPanel
-          year={selectedYear}
-          onChangeYear={onChangeYear}
-          isLoading={isLoadingYear}
-          palette={palette}
-          styles={styles}
-          compact={!isWide}
-        />
+        <View style={[styles.chartHeaderControls, stackYearZoomControls && styles.chartHeaderControlsCompact]}>
+          <View style={[styles.yearInlineControl, styles.monthlyProductionYearControl]}>
+            <Pressable
+              onPress={() => onChangeYear(selectedYear - 1)}
+              disabled={isLoadingYear}
+              accessibilityLabel={`Show ${selectedYear - 1} monthly production`}
+              style={({ pressed }) => [
+                styles.headerIconButton,
+                styles.dailyDateArrowButton,
+                pressed && !isLoadingYear ? styles.pressed : null,
+                isLoadingYear ? styles.zoomButtonDisabled : null,
+              ]}
+            >
+              <Ionicons name="chevron-back" size={18} color={palette.teal600} />
+            </Pressable>
+            <Text style={[styles.yearInlineValue, styles.dailyDateYearText]}>{selectedYear}</Text>
+            <Pressable
+              onPress={() => onChangeYear(selectedYear + 1)}
+              disabled={isLoadingYear}
+              accessibilityLabel={`Show ${selectedYear + 1} monthly production`}
+              style={({ pressed }) => [
+                styles.headerIconButton,
+                styles.dailyDateArrowButton,
+                pressed && !isLoadingYear ? styles.pressed : null,
+                isLoadingYear ? styles.zoomButtonDisabled : null,
+              ]}
+            >
+              <Ionicons name="chevron-forward" size={18} color={palette.teal600} />
+            </Pressable>
+          </View>
 
-        <View style={[styles.chartToolbar, !isWide && styles.chartToolbarCompact]}>
-          <Text style={styles.chartToolbarLabel}>Zoom</Text>
-          <View style={styles.zoomControls}>
+          <View style={styles.zoomInlineControl}>
             <Pressable
               onPress={() => updateZoom(-CHART_ZOOM_STEP)}
               disabled={!canZoomOut}
               accessibilityLabel="Zoom out"
               style={({ pressed }) => [
-                styles.zoomButton,
+                styles.headerIconButton,
                 pressed && canZoomOut ? styles.pressed : null,
                 !canZoomOut ? styles.zoomButtonDisabled : null,
               ]}
             >
-              <Ionicons name="remove" size={15} color={palette.ink900} />
+              <Ionicons name="remove" size={14} color={palette.ink900} />
             </Pressable>
             <Pressable
-              onPress={() => setZoomLevel(1)}
-              disabled={zoomLevel === 1}
+              onPress={() => setZoomLevel(defaultZoomLevel)}
+              disabled={zoomLevel === defaultZoomLevel}
               accessibilityLabel="Reset zoom"
               style={({ pressed }) => [
-                styles.zoomValueButton,
-                pressed && zoomLevel !== 1 ? styles.pressed : null,
-                zoomLevel === 1 ? styles.zoomValueButtonDisabled : null,
+                styles.zoomInlineValueButton,
+                pressed && zoomLevel !== defaultZoomLevel ? styles.pressed : null,
+                zoomLevel === defaultZoomLevel ? styles.zoomValueButtonDisabled : null,
               ]}
             >
-              <Ionicons name="resize-outline" size={14} color={palette.ink900} />
               <Text style={styles.zoomValueText}>{zoomPercent}%</Text>
             </Pressable>
             <Pressable
@@ -603,15 +639,28 @@ function MonthlyProductionCard({
               disabled={!canZoomIn}
               accessibilityLabel="Zoom in"
               style={({ pressed }) => [
-                styles.zoomButton,
+                styles.headerIconButton,
                 pressed && canZoomIn ? styles.pressed : null,
                 !canZoomIn ? styles.zoomButtonDisabled : null,
               ]}
             >
-              <Ionicons name="add" size={15} color={palette.ink900} />
+              <Ionicons name="add" size={14} color={palette.ink900} />
             </Pressable>
           </View>
         </View>
+      </View>
+
+      <View style={[styles.productionKpiStrip, stackProductionKpi && styles.productionKpiStripCompact]}>
+        <View style={[styles.productionKpiIcon, stackProductionKpi && styles.productionKpiIconCompact]}>
+          <Ionicons name="trending-up-outline" size={16} color={palette.teal600} />
+        </View>
+        <View style={styles.productionKpiCopy}>
+          <Text style={styles.productionKpiLabel}>Total Production</Text>
+          <Text numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.65} style={styles.productionKpiValue}>
+            {formatNumber(totalProduction)}
+          </Text>
+        </View>
+        <Text style={styles.productionKpiYear}>{selectedYear}</Text>
       </View>
 
       <View style={styles.productionChart}>
@@ -682,13 +731,15 @@ function MonthlyPowerConsumptionCard({
   screenWidth,
   styles,
   cardStyle,
-  selectedYear,
-  onChangeYear,
-  isLoadingYear,
+  selectedYear = new Date().getFullYear(),
+  onChangeYear = () => {},
+  isLoadingYear = false,
 }) {
   const rows = monthlyPowerConsumption?.rows ?? [];
-  const [zoomLevel, setZoomLevel] = useState(1);
+  const defaultZoomLevel = getDefaultChartZoom({ isWide, screenWidth });
+  const [zoomLevel, setZoomLevel] = useState(defaultZoomLevel);
   const [selectedBar, setSelectedBar] = useState(null);
+  const stackYearZoomControls = screenWidth < 620;
   const chlorinationPowerColor = isDark ? palette.teal500 : palette.teal600;
   const deepwellPowerColor = palette.amber500;
   const totalPower =
@@ -765,8 +816,8 @@ function MonthlyPowerConsumptionCard({
   };
   useEffect(() => {
     setSelectedBar(null);
-    setZoomLevel(1);
-  }, [selectedYear]);
+    setZoomLevel(defaultZoomLevel);
+  }, [selectedYear, defaultZoomLevel]);
   const chartData = rows.map((row) => {
     const chlorinationPower = Math.max(0, row.chlorinationPower || 0);
     const deepwellPower = Math.max(0, row.deepwellPower || 0);
@@ -810,7 +861,7 @@ function MonthlyPowerConsumptionCard({
         styles={styles}
       />
 
-      <View style={[styles.chartMetaRow, !isWide && styles.chartMetaRowCompact]}>
+      <View style={[styles.chartMetaRow, stackYearZoomControls && styles.chartMetaRowCompact]}>
         <View style={[styles.productionSummaryPill, isWide && styles.productionSummaryPillWide]}>
           <View style={styles.productionSummaryAccent} />
           <View style={styles.productionSummaryIcon}>
@@ -825,18 +876,19 @@ function MonthlyPowerConsumptionCard({
           </View>
         </View>
 
-        <YearPickerPanel
-          year={selectedYear}
-          onChangeYear={onChangeYear}
-          isLoading={isLoadingYear}
-          palette={palette}
-          styles={styles}
-          compact={!isWide}
-        />
+        <View style={[styles.chartControlRow, stackYearZoomControls && styles.chartControlRowCompact]}>
+          <YearPickerPanel
+            year={selectedYear}
+            onChangeYear={onChangeYear}
+            isLoading={isLoadingYear}
+            palette={palette}
+            styles={styles}
+            compact={stackYearZoomControls}
+          />
 
-        <View style={[styles.chartToolbar, !isWide && styles.chartToolbarCompact]}>
-          <Text style={styles.chartToolbarLabel}>Zoom</Text>
-          <View style={styles.zoomControls}>
+          <View style={[styles.chartToolbar, styles.chartToolbarInControlRow]}>
+            <Text style={styles.chartToolbarLabel}>Zoom</Text>
+            <View style={styles.zoomControls}>
             <Pressable
               onPress={() => updateZoom(-CHART_ZOOM_STEP)}
               disabled={!canZoomOut}
@@ -850,13 +902,13 @@ function MonthlyPowerConsumptionCard({
               <Ionicons name="remove" size={15} color={palette.ink900} />
             </Pressable>
             <Pressable
-              onPress={() => setZoomLevel(1)}
-              disabled={zoomLevel === 1}
+              onPress={() => setZoomLevel(defaultZoomLevel)}
+              disabled={zoomLevel === defaultZoomLevel}
               accessibilityLabel="Reset power chart zoom"
               style={({ pressed }) => [
                 styles.zoomValueButton,
-                pressed && zoomLevel !== 1 ? styles.pressed : null,
-                zoomLevel === 1 ? styles.zoomValueButtonDisabled : null,
+                pressed && zoomLevel !== defaultZoomLevel ? styles.pressed : null,
+                zoomLevel === defaultZoomLevel ? styles.zoomValueButtonDisabled : null,
               ]}
             >
               <Ionicons name="resize-outline" size={14} color={palette.ink900} />
@@ -874,6 +926,7 @@ function MonthlyPowerConsumptionCard({
             >
               <Ionicons name="add" size={15} color={palette.ink900} />
             </Pressable>
+            </View>
           </View>
         </View>
       </View>
@@ -945,13 +998,15 @@ function MonthlyChemicalUsageCard({
   screenWidth,
   styles,
   cardStyle,
-  selectedYear,
-  onChangeYear,
-  isLoadingYear,
+  selectedYear = new Date().getFullYear(),
+  onChangeYear = () => {},
+  isLoadingYear = false,
 }) {
   const rows = monthlyChemicalUsage?.rows ?? [];
-  const [zoomLevel, setZoomLevel] = useState(1);
+  const defaultZoomLevel = getDefaultChartZoom({ isWide, screenWidth });
+  const [zoomLevel, setZoomLevel] = useState(defaultZoomLevel);
   const [selectedBar, setSelectedBar] = useState(null);
+  const stackYearZoomControls = screenWidth < 620;
   const chlorineColor = isDark ? '#34BFA3' : '#0F8F7C';
   const peroxideColor = isDark ? '#F6C85F' : '#E7A321';
   const totalChlorine =
@@ -1031,8 +1086,8 @@ function MonthlyChemicalUsageCard({
   };
   useEffect(() => {
     setSelectedBar(null);
-    setZoomLevel(1);
-  }, [selectedYear]);
+    setZoomLevel(defaultZoomLevel);
+  }, [selectedYear, defaultZoomLevel]);
   const chartData = rows.map((row) => {
     const chlorineUsage = Math.max(0, row.chlorineUsage || 0);
     const peroxideUsage = Math.max(0, row.peroxideUsage || 0);
@@ -1076,7 +1131,7 @@ function MonthlyChemicalUsageCard({
         styles={styles}
       />
 
-      <View style={[styles.chartMetaRow, !isWide && styles.chartMetaRowCompact]}>
+      <View style={[styles.chartMetaRow, stackYearZoomControls && styles.chartMetaRowCompact]}>
         <View style={[styles.productionSummaryPill, isWide && styles.productionSummaryPillWide]}>
           <View style={styles.productionSummaryAccent} />
           <View style={styles.productionSummaryIcon}>
@@ -1093,18 +1148,19 @@ function MonthlyChemicalUsageCard({
           </View>
         </View>
 
-        <YearPickerPanel
-          year={selectedYear}
-          onChangeYear={onChangeYear}
-          isLoading={isLoadingYear}
-          palette={palette}
-          styles={styles}
-          compact={!isWide}
-        />
+        <View style={[styles.chartControlRow, stackYearZoomControls && styles.chartControlRowCompact]}>
+          <YearPickerPanel
+            year={selectedYear}
+            onChangeYear={onChangeYear}
+            isLoading={isLoadingYear}
+            palette={palette}
+            styles={styles}
+            compact={stackYearZoomControls}
+          />
 
-        <View style={[styles.chartToolbar, !isWide && styles.chartToolbarCompact]}>
-          <Text style={styles.chartToolbarLabel}>Zoom</Text>
-          <View style={styles.zoomControls}>
+          <View style={[styles.chartToolbar, styles.chartToolbarInControlRow]}>
+            <Text style={styles.chartToolbarLabel}>Zoom</Text>
+            <View style={styles.zoomControls}>
             <Pressable
               onPress={() => updateZoom(-CHART_ZOOM_STEP)}
               disabled={!canZoomOut}
@@ -1118,13 +1174,13 @@ function MonthlyChemicalUsageCard({
               <Ionicons name="remove" size={15} color={palette.ink900} />
             </Pressable>
             <Pressable
-              onPress={() => setZoomLevel(1)}
-              disabled={zoomLevel === 1}
+              onPress={() => setZoomLevel(defaultZoomLevel)}
+              disabled={zoomLevel === defaultZoomLevel}
               accessibilityLabel="Reset chemical usage chart zoom"
               style={({ pressed }) => [
                 styles.zoomValueButton,
-                pressed && zoomLevel !== 1 ? styles.pressed : null,
-                zoomLevel === 1 ? styles.zoomValueButtonDisabled : null,
+                pressed && zoomLevel !== defaultZoomLevel ? styles.pressed : null,
+                zoomLevel === defaultZoomLevel ? styles.zoomValueButtonDisabled : null,
               ]}
             >
               <Ionicons name="resize-outline" size={14} color={palette.ink900} />
@@ -1142,6 +1198,7 @@ function MonthlyChemicalUsageCard({
             >
               <Ionicons name="add" size={15} color={palette.ink900} />
             </Pressable>
+            </View>
           </View>
         </View>
       </View>
@@ -1220,11 +1277,14 @@ function DailyProductionCard({
   isLoadingMonth,
 }) {
   const rows = dailyProduction?.rows ?? [];
-  const [zoomLevel, setZoomLevel] = useState(1);
+  const defaultZoomLevel = getDefaultChartZoom({ isWide, screenWidth });
+  const [zoomLevel, setZoomLevel] = useState(defaultZoomLevel);
   const [selectedBar, setSelectedBar] = useState(null);
+  const [isPickerOpen, setIsPickerOpen] = useState(false);
   const selectedYear = selectedMonthDate.getFullYear();
   const selectedMonthIndex = selectedMonthDate.getMonth();
   const selectedMonthKey = `${selectedYear}-${String(selectedMonthIndex + 1).padStart(2, '0')}`;
+  const stackDailyControls = screenWidth < 430;
   const totalProduction =
     dailyProduction?.totalProduction ??
     rows.reduce((sum, row) => sum + (Number(row.production) || 0), 0);
@@ -1260,16 +1320,18 @@ function DailyProductionCard({
       return Math.min(MAX_CHART_ZOOM, Math.max(MIN_CHART_ZOOM, Number(nextZoom.toFixed(2))));
     });
   };
-  const changeYear = (offset) => {
-    onChangeMonth(new Date(selectedYear + offset, selectedMonthIndex, 1));
+  const selectYear = (year) => {
+    onChangeMonth(new Date(year, selectedMonthIndex, 1));
   };
   const selectMonth = (monthIndex) => {
     onChangeMonth(new Date(selectedYear, monthIndex, 1));
+    setIsPickerOpen(false);
   };
   useEffect(() => {
     setSelectedBar(null);
-    setZoomLevel(1);
-  }, [selectedMonthKey]);
+    setZoomLevel(defaultZoomLevel);
+    setIsPickerOpen(false);
+  }, [selectedMonthKey, defaultZoomLevel]);
   const chartData = rows.map((row) => {
     const production = Math.max(0, row.production || 0);
     const productionColor = isDark ? '#1D7896' : '#176A87';
@@ -1299,15 +1361,158 @@ function DailyProductionCard({
 
   return (
     <Card style={[styles.panelCard, cardStyle]}>
-      <SectionHeader
-        title="Daily Production"
-        iconName="stats-chart-outline"
-        iconColor={palette.teal600}
-        styles={styles}
-      />
+      <View style={styles.dailyCardHeader}>
+        <View style={styles.sectionTitleRow}>
+          <View style={styles.sectionIconWrap}>
+            <Ionicons name="stats-chart-outline" size={14} color={palette.teal600} />
+          </View>
+          <Text style={styles.sectionTitle}>Daily Production</Text>
+        </View>
 
-      <View style={[styles.chartMetaRow, !isWide && styles.chartMetaRowCompact]}>
-        <View style={[styles.productionSummaryPill, isWide && styles.productionSummaryPillWide]}>
+        <View style={styles.dailyZoomControls}>
+          <Pressable
+            onPress={() => updateZoom(-CHART_ZOOM_STEP)}
+            disabled={!canZoomOut}
+            accessibilityLabel="Zoom out daily chart"
+            style={({ pressed }) => [
+              styles.dailyZoomButton,
+              pressed && canZoomOut ? styles.pressed : null,
+              !canZoomOut ? styles.zoomButtonDisabled : null,
+            ]}
+          >
+            <Ionicons name="remove" size={15} color={palette.ink900} />
+          </Pressable>
+          <Pressable
+            onPress={() => setZoomLevel(defaultZoomLevel)}
+            disabled={zoomLevel === defaultZoomLevel}
+            accessibilityLabel="Reset daily chart zoom"
+            style={({ pressed }) => [
+              styles.dailyZoomValueButton,
+              pressed && zoomLevel !== defaultZoomLevel ? styles.pressed : null,
+              zoomLevel === defaultZoomLevel ? styles.zoomValueButtonDisabled : null,
+            ]}
+          >
+            <Ionicons name="resize-outline" size={14} color={palette.ink900} />
+            <Text style={styles.dailyZoomValueText}>{zoomPercent}%</Text>
+          </Pressable>
+          <Pressable
+            onPress={() => updateZoom(CHART_ZOOM_STEP)}
+            disabled={!canZoomIn}
+            accessibilityLabel="Zoom in daily chart"
+            style={({ pressed }) => [
+              styles.dailyZoomButton,
+              pressed && canZoomIn ? styles.pressed : null,
+              !canZoomIn ? styles.zoomButtonDisabled : null,
+            ]}
+          >
+            <Ionicons name="add" size={15} color={palette.ink900} />
+          </Pressable>
+        </View>
+      </View>
+
+      <View style={[styles.chartMetaRow, styles.dailyMetaStack]}>
+        <View style={[styles.dailyControlRow, stackDailyControls && styles.dailyControlRowPhone]}>
+          <View style={[styles.dailyDatePickerBar, stackDailyControls && styles.dailyDatePickerBarPhone]}>
+            <View style={[styles.dailyPickerWrap, stackDailyControls && styles.dailyPickerWrapPhone]}>
+              <Pressable
+                onPress={() => setIsPickerOpen((current) => !current)}
+                disabled={isLoadingMonth}
+                accessibilityLabel="Open daily production month picker"
+                style={({ pressed }) => [
+                  styles.dailyPickerButton,
+                  pressed && !isLoadingMonth ? styles.pressed : null,
+                  isLoadingMonth ? styles.zoomButtonDisabled : null,
+                ]}
+              >
+                <Ionicons name="calendar-outline" size={16} color={palette.teal600} />
+                <Text numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.75} style={[styles.dailyPickerButtonText, styles.dailyDateMonthText]}>
+                  {FULL_MONTH_PICKER_LABELS[selectedMonthIndex]}
+                </Text>
+                {isLoadingMonth ? (
+                  <ActivityIndicator size="small" color={palette.teal600} />
+                ) : (
+                  <Ionicons name={isPickerOpen ? 'chevron-up' : 'chevron-down'} size={16} color={palette.teal600} />
+                )}
+              </Pressable>
+
+              {isPickerOpen ? (
+                <View
+                  style={[
+                    styles.dailyPickerDropdown,
+                    stackDailyControls && styles.dailyPickerDropdownPhone,
+                    { width: Math.min(Math.max(screenWidth - 72, 280), 520) },
+                  ]}
+                >
+                  <View style={styles.dailyPickerDropdownNotch} />
+                  <View style={styles.dailyPickerMenuHeader}>
+                    <Text style={styles.dailyPickerMenuTitle}>Select Month</Text>
+                    <Text style={styles.dailyPickerMenuMeta}>{selectedYear}</Text>
+                  </View>
+                  <View style={styles.dailyPickerMenuRule} />
+                  <View style={styles.dailyMonthMenu}>
+                    {FULL_MONTH_PICKER_LABELS.map((label, monthIndex) => {
+                      const isSelected = monthIndex === selectedMonthIndex;
+
+                      return (
+                        <Pressable
+                          key={label}
+                          onPress={() => selectMonth(monthIndex)}
+                          disabled={isLoadingMonth || isSelected}
+                          accessibilityLabel={`Show ${label} ${selectedYear} daily production`}
+                          style={({ pressed }) => [
+                            styles.dailyMonthOption,
+                            stackDailyControls ? styles.dailyMonthOptionPhone : null,
+                            isSelected ? styles.dailyMonthOptionActive : null,
+                            pressed && !isSelected && !isLoadingMonth ? styles.pressed : null,
+                            isLoadingMonth && !isSelected ? styles.zoomButtonDisabled : null,
+                          ]}
+                        >
+                          <Text style={[styles.dailyMonthOptionText, isSelected ? styles.dailyMonthOptionTextActive : null]}>
+                            {label}
+                          </Text>
+                        </Pressable>
+                      );
+                    })}
+                  </View>
+                </View>
+              ) : null}
+            </View>
+
+            <View style={styles.dailyDateDivider} />
+
+            <View style={[styles.yearInlineControl, styles.dailyYearInlineControl, stackDailyControls && styles.dailyYearInlineControlPhone]}>
+              <Pressable
+                onPress={() => selectYear(selectedYear - 1)}
+                disabled={isLoadingMonth}
+                accessibilityLabel={`Show ${selectedYear - 1} daily production`}
+                style={({ pressed }) => [
+                  styles.headerIconButton,
+                  styles.dailyDateArrowButton,
+                  pressed && !isLoadingMonth ? styles.pressed : null,
+                  isLoadingMonth ? styles.zoomButtonDisabled : null,
+                ]}
+              >
+                <Ionicons name="chevron-back" size={18} color={palette.teal600} />
+              </Pressable>
+              <Text style={[styles.yearInlineValue, styles.dailyDateYearText]}>{selectedYear}</Text>
+              <Pressable
+                onPress={() => selectYear(selectedYear + 1)}
+                disabled={isLoadingMonth}
+                accessibilityLabel={`Show ${selectedYear + 1} daily production`}
+                style={({ pressed }) => [
+                  styles.headerIconButton,
+                  styles.dailyDateArrowButton,
+                  pressed && !isLoadingMonth ? styles.pressed : null,
+                  isLoadingMonth ? styles.zoomButtonDisabled : null,
+                ]}
+              >
+                <Ionicons name="chevron-forward" size={18} color={palette.teal600} />
+              </Pressable>
+            </View>
+          </View>
+        </View>
+
+        <View style={styles.productionSummaryPill}>
           <View style={styles.productionSummaryAccent} />
           <View style={styles.productionSummaryIcon}>
             <Ionicons name="calendar-outline" size={15} color={palette.teal600} />
@@ -1318,107 +1523,6 @@ function DailyProductionCard({
               {formatNumber(totalProduction)}
             </Text>
             <Text style={styles.productionSummaryHint}>{dailyProduction?.monthLabel || 'Current month'}</Text>
-          </View>
-        </View>
-
-        <View style={[styles.monthPickerPanel, !isWide && styles.monthPickerPanelCompact]}>
-          <View style={styles.monthPickerHeader}>
-            <Text style={styles.chartToolbarLabel}>Month / Year</Text>
-            {isLoadingMonth ? <ActivityIndicator size="small" color={palette.teal600} /> : null}
-          </View>
-          <View style={styles.yearPickerRow}>
-            <Pressable
-              onPress={() => changeYear(-1)}
-              disabled={isLoadingMonth}
-              accessibilityLabel="Previous daily production year"
-              style={({ pressed }) => [
-                styles.zoomButton,
-                pressed && !isLoadingMonth ? styles.pressed : null,
-                isLoadingMonth ? styles.zoomButtonDisabled : null,
-              ]}
-            >
-              <Ionicons name="chevron-back" size={15} color={palette.ink900} />
-            </Pressable>
-            <Text style={styles.yearPickerValue}>{selectedYear}</Text>
-            <Pressable
-              onPress={() => changeYear(1)}
-              disabled={isLoadingMonth}
-              accessibilityLabel="Next daily production year"
-              style={({ pressed }) => [
-                styles.zoomButton,
-                pressed && !isLoadingMonth ? styles.pressed : null,
-                isLoadingMonth ? styles.zoomButtonDisabled : null,
-              ]}
-            >
-              <Ionicons name="chevron-forward" size={15} color={palette.ink900} />
-            </Pressable>
-          </View>
-          <View style={styles.monthPickerGrid}>
-            {MONTH_PICKER_LABELS.map((label, monthIndex) => {
-              const isSelected = monthIndex === selectedMonthIndex;
-
-              return (
-                <Pressable
-                  key={label}
-                  onPress={() => selectMonth(monthIndex)}
-                  disabled={isLoadingMonth || isSelected}
-                  accessibilityLabel={`Show ${label} ${selectedYear} daily production`}
-                  style={({ pressed }) => [
-                    styles.monthPickerChip,
-                    isSelected ? styles.monthPickerChipActive : null,
-                    pressed && !isSelected && !isLoadingMonth ? styles.pressed : null,
-                    isLoadingMonth && !isSelected ? styles.zoomButtonDisabled : null,
-                  ]}
-                >
-                  <Text style={[styles.monthPickerChipText, isSelected ? styles.monthPickerChipTextActive : null]}>
-                    {label}
-                  </Text>
-                </Pressable>
-              );
-            })}
-          </View>
-        </View>
-
-        <View style={[styles.chartToolbar, !isWide && styles.chartToolbarCompact]}>
-          <Text style={styles.chartToolbarLabel}>Zoom</Text>
-          <View style={styles.zoomControls}>
-            <Pressable
-              onPress={() => updateZoom(-CHART_ZOOM_STEP)}
-              disabled={!canZoomOut}
-              accessibilityLabel="Zoom out daily chart"
-              style={({ pressed }) => [
-                styles.zoomButton,
-                pressed && canZoomOut ? styles.pressed : null,
-                !canZoomOut ? styles.zoomButtonDisabled : null,
-              ]}
-            >
-              <Ionicons name="remove" size={15} color={palette.ink900} />
-            </Pressable>
-            <Pressable
-              onPress={() => setZoomLevel(1)}
-              disabled={zoomLevel === 1}
-              accessibilityLabel="Reset daily chart zoom"
-              style={({ pressed }) => [
-                styles.zoomValueButton,
-                pressed && zoomLevel !== 1 ? styles.pressed : null,
-                zoomLevel === 1 ? styles.zoomValueButtonDisabled : null,
-              ]}
-            >
-              <Ionicons name="resize-outline" size={14} color={palette.ink900} />
-              <Text style={styles.zoomValueText}>{zoomPercent}%</Text>
-            </Pressable>
-            <Pressable
-              onPress={() => updateZoom(CHART_ZOOM_STEP)}
-              disabled={!canZoomIn}
-              accessibilityLabel="Zoom in daily chart"
-              style={({ pressed }) => [
-                styles.zoomButton,
-                pressed && canZoomIn ? styles.pressed : null,
-                !canZoomIn ? styles.zoomButtonDisabled : null,
-              ]}
-            >
-              <Ionicons name="add" size={15} color={palette.ink900} />
-            </Pressable>
           </View>
         </View>
       </View>
@@ -1948,6 +2052,7 @@ function createStyles(palette, isDark, responsiveMetrics) {
       width: '100%',
       gap: 12,
       padding: 12,
+      overflow: 'visible',
     },
     skeletonBlock: {
       backgroundColor: isDark ? '#1C3346' : '#E5EEF6',
@@ -2092,7 +2197,16 @@ function createStyles(palette, isDark, responsiveMetrics) {
       fontSize: 12,
       lineHeight: 16,
     },
+    dailyCardHeader: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      gap: 10,
+    },
     chartMetaRow: {
+      position: 'relative',
+      zIndex: 20,
+      elevation: 20,
       flexDirection: 'row',
       flexWrap: 'wrap',
       alignItems: 'stretch',
@@ -2100,6 +2214,200 @@ function createStyles(palette, isDark, responsiveMetrics) {
       gap: 8,
     },
     chartMetaRowCompact: {
+      flexDirection: 'column',
+    },
+    dailyMetaStack: {
+      flexDirection: 'column',
+      alignItems: 'stretch',
+    },
+    dailyControlRow: {
+      width: '100%',
+      position: 'relative',
+      zIndex: 30,
+      elevation: 30,
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      gap: 6,
+    },
+    dailyControlRowPhone: {
+      flexWrap: 'wrap',
+      alignItems: 'stretch',
+      justifyContent: 'center',
+    },
+    dailyDatePickerBar: {
+      flexGrow: 2.6,
+      flexShrink: 1,
+      flexBasis: 0,
+      minWidth: 260,
+      minHeight: 52,
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 8,
+      borderWidth: 1,
+      borderColor: isDark ? '#254A66' : '#CFE2F3',
+      backgroundColor: isDark ? '#0C1824' : '#F6FBFF',
+      paddingHorizontal: 6,
+      paddingVertical: 6,
+      borderRadius: 12,
+    },
+    dailyDatePickerBarPhone: {
+      flexBasis: '100%',
+      minWidth: 0,
+    },
+    dailyDateDivider: {
+      width: 1,
+      alignSelf: 'stretch',
+      backgroundColor: isDark ? '#24445F' : '#D7E6F2',
+      opacity: 0.9,
+    },
+    chartAppHeader: {
+      minHeight: 42,
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      gap: 10,
+    },
+    chartAppHeaderCompact: {
+      alignItems: 'stretch',
+      flexDirection: 'column',
+      gap: 8,
+    },
+    chartHeaderControls: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'flex-end',
+      gap: 8,
+    },
+    chartHeaderControlsCompact: {
+      justifyContent: 'center',
+      flexWrap: 'wrap',
+      gap: 6,
+    },
+    yearInlineControl: {
+      minHeight: 34,
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 4,
+      borderWidth: 1,
+      borderColor: palette.line,
+      backgroundColor: isDark ? '#101D2A' : '#F9FCFF',
+      paddingHorizontal: 6,
+      paddingVertical: 4,
+      borderRadius: 8,
+    },
+    monthlyProductionYearControl: {
+      minHeight: 40,
+      justifyContent: 'space-between',
+      borderColor: isDark ? '#1D8C91' : '#B5E5E3',
+      backgroundColor: isDark ? '#0F2B35' : '#F0FBFA',
+      borderRadius: 10,
+    },
+    zoomInlineControl: {
+      minHeight: 34,
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 4,
+      borderWidth: 1,
+      borderColor: palette.line,
+      backgroundColor: isDark ? '#101D2A' : '#F9FCFF',
+      paddingHorizontal: 6,
+      paddingVertical: 4,
+      borderRadius: 8,
+    },
+    headerIconButton: {
+      width: 26,
+      height: 26,
+      alignItems: 'center',
+      justifyContent: 'center',
+      borderWidth: 1,
+      borderColor: palette.line,
+      backgroundColor: isDark ? '#152636' : '#F7FBFF',
+      borderRadius: 7,
+    },
+    yearInlineValue: {
+      minWidth: 48,
+      color: palette.ink900,
+      fontSize: 13,
+      fontWeight: '900',
+      textAlign: 'center',
+    },
+    zoomInlineValueButton: {
+      minWidth: 58,
+      height: 26,
+      alignItems: 'center',
+      justifyContent: 'center',
+      borderWidth: 1,
+      borderColor: isDark ? '#1A655E' : '#B4E5DE',
+      backgroundColor: isDark ? '#11312D' : '#E5F5F3',
+      paddingHorizontal: 7,
+      borderRadius: 7,
+    },
+    productionKpiStrip: {
+      minHeight: 54,
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 12,
+      borderWidth: 1,
+      borderColor: isDark ? '#1E5B61' : '#B7E2E4',
+      backgroundColor: isDark ? '#102735' : '#F2FCFC',
+      paddingHorizontal: 14,
+      paddingVertical: 10,
+      borderRadius: 8,
+    },
+    productionKpiStripCompact: {
+      gap: 8,
+      paddingHorizontal: 10,
+      paddingVertical: 9,
+    },
+    productionKpiIcon: {
+      width: 36,
+      height: 36,
+      alignItems: 'center',
+      justifyContent: 'center',
+      borderWidth: 1,
+      borderColor: isDark ? '#26786F' : '#9ADBD5',
+      backgroundColor: isDark ? '#0E3A37' : '#DDF7F4',
+      borderRadius: 8,
+    },
+    productionKpiIconCompact: {
+      width: 32,
+      height: 32,
+    },
+    productionKpiCopy: {
+      flex: 1,
+      minWidth: 0,
+    },
+    productionKpiLabel: {
+      color: palette.ink700,
+      fontSize: 10,
+      fontWeight: '900',
+      textTransform: 'uppercase',
+    },
+    productionKpiValue: {
+      marginTop: 2,
+      color: isDark ? palette.ink900 : palette.navy900,
+      fontSize: 20,
+      fontWeight: '900',
+      lineHeight: 24,
+    },
+    productionKpiYear: {
+      color: palette.ink700,
+      fontSize: 14,
+      fontWeight: '900',
+    },
+    chartControlRow: {
+      flexGrow: 1,
+      flexShrink: 1,
+      minWidth: 320,
+      flexDirection: 'row',
+      alignItems: 'stretch',
+      justifyContent: 'flex-end',
+      gap: 6,
+    },
+    chartControlRowCompact: {
+      width: '100%',
+      minWidth: 0,
       flexDirection: 'column',
     },
     productionSummaryPill: {
@@ -2173,17 +2481,22 @@ function createStyles(palette, isDark, responsiveMetrics) {
       flexDirection: 'row',
       alignItems: 'center',
       justifyContent: 'space-between',
-      gap: 8,
-      minHeight: 54,
+      gap: 6,
+      minHeight: 44,
       borderWidth: 1,
       borderColor: palette.line,
       backgroundColor: isDark ? '#101D2A' : '#F9FCFF',
-      paddingHorizontal: 10,
-      paddingVertical: 10,
+      paddingHorizontal: 8,
+      paddingVertical: 6,
       borderRadius: 8,
     },
     chartToolbarCompact: {
       width: '100%',
+    },
+    chartToolbarInControlRow: {
+      flexGrow: 1,
+      flexShrink: 1,
+      minWidth: 160,
     },
     monthPickerPanel: {
       flexGrow: 1,
@@ -2201,39 +2514,249 @@ function createStyles(palette, isDark, responsiveMetrics) {
     monthPickerPanelCompact: {
       width: '100%',
     },
-    yearPickerPanel: {
+    dailyPickerWrap: {
+      position: 'relative',
+      flexGrow: 1.7,
+      flexShrink: 1,
+      flexBasis: 0,
+      minWidth: 112,
+      zIndex: 50,
+      elevation: 50,
+    },
+    dailyPickerWrapPhone: {
+      flexGrow: 1.45,
+      flexBasis: 0,
+    },
+    dailyPickerWrapCompact: {
+      width: '100%',
+    },
+    dailyPickerButton: {
+      minHeight: 40,
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      gap: 8,
+      borderWidth: 1,
+      borderColor: isDark ? '#2A5A77' : '#BFD9EA',
+      backgroundColor: isDark ? '#132435' : '#FBFEFF',
+      paddingHorizontal: 10,
+      paddingVertical: 7,
+      borderRadius: 10,
+    },
+    dailyPickerButtonText: {
+      flex: 1,
+      minWidth: 0,
+      color: palette.ink900,
+      fontSize: 12,
+      fontWeight: '900',
+    },
+    dailyDateMonthText: {
+      fontSize: 15,
+      lineHeight: 18,
+    },
+    dailyPickerDropdown: {
+      position: 'absolute',
+      left: 0,
+      top: 58,
+      gap: 12,
+      borderWidth: 1,
+      borderColor: isDark ? '#246080' : '#B8DDF0',
+      backgroundColor: isDark ? '#081522' : '#F8FCFF',
+      paddingHorizontal: 14,
+      paddingTop: 18,
+      paddingBottom: 14,
+      borderRadius: 14,
+      shadowColor: isDark ? '#00D6D0' : '#0F6E91',
+      shadowOpacity: isDark ? 0.24 : 0.16,
+      shadowRadius: 16,
+      shadowOffset: { width: 0, height: 10 },
+      elevation: 60,
+      zIndex: 60,
+    },
+    dailyPickerDropdownPhone: {
+      left: -2,
+      paddingHorizontal: 12,
+    },
+    dailyPickerDropdownNotch: {
+      position: 'absolute',
+      top: -10,
+      left: 26,
+      width: 20,
+      height: 20,
+      borderLeftWidth: 1,
+      borderTopWidth: 1,
+      borderColor: isDark ? '#246080' : '#B8DDF0',
+      backgroundColor: isDark ? '#081522' : '#F8FCFF',
+      transform: [{ rotate: '45deg' }],
+      borderTopLeftRadius: 4,
+    },
+    dailyPickerMenuHeader: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      gap: 8,
+      paddingHorizontal: 2,
+    },
+    dailyPickerMenuTitle: {
+      color: isDark ? '#9DB9CB' : '#52738B',
+      fontSize: 12,
+      fontWeight: '900',
+      textTransform: 'uppercase',
+      letterSpacing: 0,
+    },
+    dailyPickerMenuMeta: {
+      color: palette.ink900,
+      fontSize: 16,
+      fontWeight: '900',
+    },
+    dailyPickerMenuRule: {
+      height: 1,
+      backgroundColor: isDark ? '#24445F' : '#D7E6F2',
+      opacity: 0.9,
+    },
+    dailyYearInlineControl: {
       flexGrow: 1,
       flexShrink: 1,
-      minWidth: 190,
-      minHeight: 54,
+      flexBasis: 0,
+      minWidth: 118,
+      minHeight: 40,
+      justifyContent: 'space-between',
+      borderColor: isDark ? '#1D8C91' : '#B5E5E3',
+      backgroundColor: isDark ? '#0F2B35' : '#F0FBFA',
+      borderRadius: 10,
+    },
+    dailyYearInlineControlPhone: {
+      flexBasis: 0,
+      minWidth: 0,
+    },
+    dailyDateYearText: {
+      color: palette.ink900,
+      fontSize: 15,
+      lineHeight: 18,
+    },
+    dailyDateArrowButton: {
+      width: 32,
+      height: 32,
+      borderColor: isDark ? '#254A66' : '#CFE2F3',
+      backgroundColor: isDark ? '#142638' : '#F8FCFF',
+      borderRadius: 9,
+    },
+    dailyYearInlineControlCompact: {
+      alignSelf: 'center',
+    },
+    dailyZoomControls: {
+      flexShrink: 0,
+      minHeight: 32,
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'flex-end',
+      gap: 5,
+      borderWidth: 1,
+      borderColor: isDark ? '#254A66' : '#CFE2F3',
+      backgroundColor: isDark ? '#0C1824' : '#F6FBFF',
+      paddingHorizontal: 4,
+      paddingVertical: 3,
+      borderRadius: 10,
+    },
+    dailyZoomButton: {
+      height: 30,
+      width: 30,
+      alignItems: 'center',
+      justifyContent: 'center',
+      borderWidth: 1,
+      borderColor: isDark ? '#294C68' : '#D5E5F3',
+      backgroundColor: isDark ? '#142638' : '#F8FCFF',
+      borderRadius: 8,
+    },
+    dailyZoomValueButton: {
+      height: 30,
+      minWidth: 62,
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'center',
+      gap: 4,
+      borderWidth: 1,
+      borderColor: isDark ? '#11B9A7' : '#8ADCD6',
+      backgroundColor: isDark ? '#0F3A35' : '#E5F8F6',
+      paddingHorizontal: 6,
+      borderRadius: 8,
+    },
+    dailyZoomValueText: {
+      color: palette.ink900,
+      fontSize: 10,
+      fontWeight: '900',
+    },
+    dailyMonthMenu: {
+      flexDirection: 'row',
+      flexWrap: 'wrap',
+      gap: 8,
+    },
+    dailyMonthOption: {
+      width: '23%',
+      minHeight: 48,
+      alignItems: 'center',
+      justifyContent: 'center',
+      borderWidth: 1,
+      borderColor: isDark ? '#23516D' : '#BFD9EA',
+      backgroundColor: isDark ? '#0D1C2B' : '#FFFFFF',
+      paddingHorizontal: 6,
+      borderRadius: 9,
+    },
+    dailyMonthOptionPhone: {
+      width: '48%',
+    },
+    dailyMonthOptionActive: {
+      borderColor: isDark ? '#22E4DC' : '#42C7C5',
+      backgroundColor: isDark ? '#0B7774' : '#D7F8F5',
+      shadowColor: '#14DAD2',
+      shadowOpacity: isDark ? 0.36 : 0.18,
+      shadowRadius: 10,
+      shadowOffset: { width: 0, height: 4 },
+      elevation: 4,
+    },
+    dailyMonthOptionText: {
+      color: palette.ink900,
+      fontSize: 12,
+      fontWeight: '900',
+      textAlign: 'center',
+    },
+    dailyMonthOptionTextActive: {
+      color: isDark ? '#FFFFFF' : '#064E4B',
+      fontWeight: '900',
+    },
+    yearPickerPanel: {
+      flexGrow: 0,
+      flexShrink: 0,
+      minWidth: 150,
+      minHeight: 44,
       borderWidth: 1,
       borderColor: palette.line,
       backgroundColor: isDark ? '#101D2A' : '#F9FCFF',
-      paddingHorizontal: 10,
-      paddingVertical: 10,
+      paddingHorizontal: 8,
+      paddingVertical: 6,
       borderRadius: 8,
-      gap: 6,
+      gap: 4,
     },
     yearPickerPanelCompact: {
       width: '100%',
     },
     monthPickerHeader: {
-      minHeight: 18,
+      minHeight: 14,
       flexDirection: 'row',
       alignItems: 'center',
       justifyContent: 'space-between',
-      gap: 8,
+      gap: 6,
     },
     yearPickerRow: {
       flexDirection: 'row',
       alignItems: 'center',
       justifyContent: 'center',
-      gap: 8,
+      gap: 6,
     },
     yearPickerValue: {
-      minWidth: 70,
+      minWidth: 54,
       color: palette.ink900,
-      fontSize: 16,
+      fontSize: 14,
       fontWeight: '900',
       textAlign: 'center',
     },
@@ -2267,18 +2790,18 @@ function createStyles(palette, isDark, responsiveMetrics) {
     },
     chartToolbarLabel: {
       color: palette.ink700,
-      fontSize: 10,
+      fontSize: 9,
       fontWeight: '900',
       textTransform: 'uppercase',
     },
     zoomControls: {
       flexDirection: 'row',
       alignItems: 'center',
-      gap: 6,
+      gap: 5,
     },
     zoomButton: {
-      width: 32,
-      height: 32,
+      width: 28,
+      height: 28,
       alignItems: 'center',
       justifyContent: 'center',
       borderWidth: 1,
@@ -2290,16 +2813,16 @@ function createStyles(palette, isDark, responsiveMetrics) {
       opacity: 0.45,
     },
     zoomValueButton: {
-      minWidth: 74,
-      height: 32,
+      minWidth: 62,
+      height: 28,
       flexDirection: 'row',
       alignItems: 'center',
       justifyContent: 'center',
-      gap: 5,
+      gap: 4,
       borderWidth: 1,
       borderColor: isDark ? '#1A655E' : '#B4E5DE',
       backgroundColor: isDark ? '#11312D' : '#E5F5F3',
-      paddingHorizontal: 10,
+      paddingHorizontal: 8,
       borderRadius: 8,
     },
     zoomValueButtonDisabled: {
@@ -2313,6 +2836,8 @@ function createStyles(palette, isDark, responsiveMetrics) {
     productionChart: {
       overflow: 'hidden',
       position: 'relative',
+      zIndex: 0,
+      elevation: 0,
       alignItems: 'center',
       minHeight: CHART_CONTAINER_MIN_HEIGHT,
       paddingTop: 20,
