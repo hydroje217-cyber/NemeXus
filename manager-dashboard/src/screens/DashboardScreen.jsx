@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import {
+  AlertTriangle,
   ArrowUp,
   BarChart3,
   CheckCircle2,
@@ -14,11 +15,12 @@ import {
   RefreshCw,
   Sun,
   Users,
+  X,
   Zap,
 } from 'lucide-react';
 import AccountsScreen from './AccountsScreen';
 import ApprovalsScreen from './ApprovalsScreen';
-import OverviewScreen from './OverviewScreen';
+import OverviewScreen, { buildOperationAlerts } from './OverviewScreen';
 import ReadingsScreen from './ReadingsScreen';
 
 function titleize(value) {
@@ -55,11 +57,28 @@ function getTabs(isAdmin) {
   return tabs;
 }
 
-const DASHBOARD_SECTIONS = [
-  { key: 'production', label: 'Production', icon: BarChart3 },
-  { key: 'power', label: 'Power', icon: Zap },
-  { key: 'chemical', label: 'Chemical', icon: FlaskConical },
-  { key: 'activity', label: 'Operators & Recent', icon: History },
+const DASHBOARD_SECTION_GROUPS = [
+  {
+    label: 'Overview',
+    sections: [
+      { key: 'summary', label: 'Live Summary', icon: Zap },
+      { key: 'operations', label: 'Operations', icon: AlertTriangle },
+    ],
+  },
+  {
+    label: 'Analytics',
+    sections: [
+      { key: 'production', label: 'Production', icon: BarChart3 },
+      { key: 'power', label: 'Power', icon: Zap },
+      { key: 'chemical', label: 'Chemical', icon: FlaskConical },
+    ],
+  },
+  {
+    label: 'Activity',
+    sections: [
+      { key: 'activity', label: 'Operators & Recent', icon: History },
+    ],
+  },
 ];
 
 export default function DashboardScreen({
@@ -82,12 +101,13 @@ export default function DashboardScreen({
 }) {
   const tabs = getTabs(isAdmin);
   const recentReadings = dashboard?.recentReadings ?? [];
+  const operationAlertCount = buildOperationAlerts(dashboard).length;
   const [readingType, setReadingType] = useState('CHLORINATION');
-  const [dashboardSection, setDashboardSection] = useState('production');
-  const [visibleDashboardSections, setVisibleDashboardSections] = useState(['production']);
+  const [dashboardSection, setDashboardSection] = useState('summary');
+  const [visibleDashboardSections, setVisibleDashboardSections] = useState(['summary']);
   const [dashboardScrollRequest, setDashboardScrollRequest] = useState(0);
   const [isBrandMenuOpen, setIsBrandMenuOpen] = useState(false);
-  const [isMobileNavOpen, setIsMobileNavOpen] = useState(false);
+  const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const [showScrollTop, setShowScrollTop] = useState(false);
   const [openSubnav, setOpenSubnav] = useState('dashboard');
   const brandMenuRef = useRef(null);
@@ -157,7 +177,7 @@ export default function DashboardScreen({
         onOpenApprovals={() => {
           onNavigate('approvals');
           setOpenSubnav('');
-          setIsMobileNavOpen(false);
+          setIsSidebarOpen(false);
         }}
       />
     );
@@ -168,7 +188,13 @@ export default function DashboardScreen({
     setVisibleDashboardSections([sectionKey]);
     setDashboardScrollRequest((requestId) => requestId + 1);
     onNavigate('dashboard');
-    setIsMobileNavOpen(false);
+    setIsSidebarOpen(false);
+    setIsBrandMenuOpen(false);
+  }
+
+  function handleReadingTypeSelect(nextReadingType) {
+    setReadingType(nextReadingType);
+    setIsSidebarOpen(false);
     setIsBrandMenuOpen(false);
   }
 
@@ -181,8 +207,8 @@ export default function DashboardScreen({
     }
 
     if (tabKey === 'dashboard') {
-      setDashboardSection('production');
-      setVisibleDashboardSections(['production']);
+      setDashboardSection('summary');
+      setVisibleDashboardSections(['summary']);
       setDashboardScrollRequest((requestId) => requestId + 1);
     }
 
@@ -191,7 +217,7 @@ export default function DashboardScreen({
     setIsBrandMenuOpen(false);
 
     if (!hasSubnav) {
-      setIsMobileNavOpen(false);
+      setIsSidebarOpen(false);
     }
   }
 
@@ -201,7 +227,29 @@ export default function DashboardScreen({
 
   return (
     <main className={`app-shell ${isDarkMode ? 'dark-mode' : 'light-mode'}`}>
-      <aside className="sidebar">
+      <button
+        className="sidebar-toggle-button"
+        type="button"
+        aria-label={isSidebarOpen ? 'Close navigation' : 'Open navigation'}
+        aria-expanded={isSidebarOpen}
+        onClick={() => setIsSidebarOpen((isOpen) => !isOpen)}
+      >
+        {isSidebarOpen ? <X size={20} /> : <Menu size={20} />}
+      </button>
+
+      {isSidebarOpen ? (
+        <button
+          className="sidebar-scrim"
+          type="button"
+          aria-label="Close navigation"
+          onClick={() => {
+            setIsSidebarOpen(false);
+            setIsBrandMenuOpen(false);
+          }}
+        />
+      ) : null}
+
+      <aside className={isSidebarOpen ? 'sidebar is-open' : 'sidebar'} aria-hidden={!isSidebarOpen}>
         <div className="sidebar-mobile-head">
           <div
             className={isBrandMenuOpen ? 'brand-menu-wrap menu-open' : 'brand-menu-wrap'}
@@ -214,7 +262,6 @@ export default function DashboardScreen({
               aria-label="Open account menu"
               onClick={() => {
                 setIsBrandMenuOpen((isOpen) => !isOpen);
-                setIsMobileNavOpen(false);
               }}
             >
               <span className="brand-mark">
@@ -255,23 +302,17 @@ export default function DashboardScreen({
           <button
             className="mobile-menu-button"
             type="button"
-            aria-label="Toggle navigation"
-            aria-expanded={isMobileNavOpen}
+            aria-label="Close navigation"
             onClick={() => {
-              setIsMobileNavOpen((isOpen) => {
-                if (!isOpen) {
-                  setOpenSubnav('');
-                }
-
-                return !isOpen;
-              });
+              setIsSidebarOpen(false);
+              setIsBrandMenuOpen(false);
             }}
           >
-            <Menu size={20} />
+            <X size={20} />
           </button>
         </div>
 
-        <nav className={isMobileNavOpen ? 'tabs mobile-open' : 'tabs'}>
+        <nav className="tabs">
           {tabs.map((tab) => {
             const Icon = tab.icon;
             return (
@@ -286,20 +327,25 @@ export default function DashboardScreen({
                 </button>
                 {tab.key === 'dashboard' && activeView === 'dashboard' && openSubnav === 'dashboard' ? (
                   <div className="tabs-subnav dashboard-subnav">
-                    {DASHBOARD_SECTIONS.map((section) => {
-                      const SectionIcon = section.icon;
-                      return (
-                        <button
-                          type="button"
-                          key={section.key}
-                          className={visibleDashboardSections.includes(section.key) ? 'active' : ''}
-                          onClick={() => handleDashboardSectionSelect(section.key)}
-                        >
-                          <SectionIcon size={14} />
-                          {section.label}
-                        </button>
-                      );
-                    })}
+                    {DASHBOARD_SECTION_GROUPS.map((group) => (
+                      <div className="dashboard-subnav-group" key={group.label}>
+                        <span className="dashboard-subnav-label">{group.label}</span>
+                        {group.sections.map((section) => {
+                          const SectionIcon = section.icon;
+                          return (
+                            <button
+                              type="button"
+                              key={section.key}
+                              className={visibleDashboardSections.includes(section.key) ? 'active' : ''}
+                              onClick={() => handleDashboardSectionSelect(section.key)}
+                            >
+                              <SectionIcon size={14} />
+                              {section.label}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    ))}
                   </div>
                 ) : null}
                 {tab.key === 'readings' && activeView === 'readings' && openSubnav === 'readings' ? (
@@ -307,14 +353,14 @@ export default function DashboardScreen({
                     <button
                       type="button"
                       className={readingType === 'CHLORINATION' ? 'active' : ''}
-                      onClick={() => setReadingType('CHLORINATION')}
+                      onClick={() => handleReadingTypeSelect('CHLORINATION')}
                     >
                       Chlorination
                     </button>
                     <button
                       type="button"
                       className={readingType === 'DEEPWELL' ? 'active' : ''}
-                      onClick={() => setReadingType('DEEPWELL')}
+                      onClick={() => handleReadingTypeSelect('DEEPWELL')}
                     >
                       Deepwell
                     </button>
@@ -329,18 +375,46 @@ export default function DashboardScreen({
       <section className="content">
         <header className="topbar">
           <div>
-            <p className="eyebrow">Live Supabase workspace</p>
-            <h2>{titleize(activeView)}</h2>
+            <div className="topbar-title-row">
+              <button
+                className="topbar-menu-button"
+                type="button"
+                aria-label="Open navigation"
+                aria-expanded={isSidebarOpen}
+                onClick={() => setIsSidebarOpen(true)}
+              >
+                <Menu size={20} />
+              </button>
+              <div className="topbar-title-copy">
+                <p className="eyebrow">Live Supabase workspace</p>
+                <h2>{titleize(activeView)}</h2>
+              </div>
+              <button className="mobile-title-refresh" type="button" aria-label="Refresh dashboard" onClick={onRefresh} disabled={loading}>
+                {loading ? <Loader2 className="spin" size={16} /> : <RefreshCw size={16} />}
+              </button>
+            </div>
           </div>
-          <div className="topbar-actions">
-            <span className="freshness-pill">
-              <span aria-hidden="true" />
-              {formatLastUpdated(lastUpdatedAt)}
-            </span>
-            <button type="button" onClick={onRefresh} disabled={loading}>
-              {loading ? <Loader2 className="spin" size={16} /> : <RefreshCw size={16} />}
-              Refresh
-            </button>
+          <div className="topbar-status-row">
+            <div className="status-strip" aria-label="Workspace status">
+              <span className="status-pill connected">
+                <CheckCircle2 size={14} />
+                Connected
+              </span>
+              <span className={operationAlertCount ? 'status-pill warning' : 'status-pill connected'}>
+                <AlertTriangle size={14} />
+                {operationAlertCount} alerts
+              </span>
+            </div>
+            <div className="topbar-actions">
+              <span className="freshness-pill">
+                <span aria-hidden="true" />
+                {formatLastUpdated(lastUpdatedAt)}
+              </span>
+              <button className="refresh-button" type="button" onClick={onRefresh} disabled={loading}>
+                {loading ? <Loader2 className="spin" size={16} /> : <RefreshCw size={16} />}
+                <span className="refresh-button-label">Refresh</span>
+              </button>
+            </div>
           </div>
         </header>
 
