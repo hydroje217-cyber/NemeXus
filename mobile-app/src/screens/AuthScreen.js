@@ -16,6 +16,7 @@ export default function AuthScreen({ initialMessage = '', initialTone = 'info' }
   const { width } = useWindowDimensions();
   const responsiveMetrics = useMemo(() => getResponsiveMetrics(width), [width]);
   const styles = useMemo(() => createStyles(palette, isDark, responsiveMetrics), [palette, isDark, responsiveMetrics]);
+  const useMobileLoginCard = width < 620;
   const [mode, setMode] = useState('sign-in');
   const [fullName, setFullName] = useState('');
   const [email, setEmail] = useState('');
@@ -64,6 +65,7 @@ export default function AuthScreen({ initialMessage = '', initialTone = 'info' }
         enableAutomaticScroll: true,
       }}
     >
+      {!useMobileLoginCard ? (
       <Card>
         <View style={styles.cardTitleRow}>
           <View style={styles.cardIconWrap}>
@@ -79,10 +81,23 @@ export default function AuthScreen({ initialMessage = '', initialTone = 'info' }
           Use your work email and password. Registration is reviewed by the office dashboard, and operators cannot access data collection screens until office approval is granted.
         </Text>
       </Card>
+      ) : null}
 
       {message ? <MessageBanner tone={tone}>{message}</MessageBanner> : null}
 
-      <Card style={styles.formCard}>
+      <Card style={[styles.formCard, useMobileLoginCard && styles.mobileLoginCard]}>
+        {useMobileLoginCard ? (
+          <View style={styles.mobileLoginHeader}>
+            <View style={styles.mobileBrandMark}>
+              <Ionicons name="analytics-outline" size={20} color={palette.teal600} />
+            </View>
+            <View style={styles.mobileLoginCopy}>
+              <Text style={styles.mobileLoginTitle}>NemeXus Dashboard</Text>
+              <Text style={styles.mobileLoginSubtitle}>Manager and supervisor access</Text>
+            </View>
+          </View>
+        ) : null}
+
         {mode === 'sign-up' ? (
           <FormField
             label="Full name"
@@ -125,7 +140,7 @@ export default function AuthScreen({ initialMessage = '', initialTone = 'info' }
           disabled={!email.trim() || !password.trim() || (mode === 'sign-up' && !fullName.trim())}
           icon={
             <Ionicons
-              name={mode === 'sign-in' ? 'arrow-forward-circle-outline' : 'checkmark-circle-outline'}
+              name={mode === 'sign-in' && useMobileLoginCard ? 'shield-checkmark-outline' : mode === 'sign-in' ? 'arrow-forward-circle-outline' : 'checkmark-circle-outline'}
               size={18}
               color={palette.onAccent}
             />
@@ -177,6 +192,46 @@ function createStyles(palette, isDark, responsiveMetrics) {
     },
     formCard: {
       gap: 14,
+    },
+    mobileLoginCard: {
+      gap: 18,
+      borderRadius: 8,
+      padding: 18,
+      borderColor: isDark ? '#29465C' : '#C7D8E5',
+      backgroundColor: isDark ? '#101B25' : palette.card,
+    },
+    mobileLoginHeader: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 12,
+      marginBottom: 2,
+    },
+    mobileBrandMark: {
+      width: 40,
+      height: 40,
+      alignItems: 'center',
+      justifyContent: 'center',
+      borderWidth: 1,
+      borderColor: palette.teal600,
+      backgroundColor: isDark ? '#0B1620' : '#F7FCFF',
+      borderRadius: 6,
+    },
+    mobileLoginCopy: {
+      flex: 1,
+      minWidth: 0,
+    },
+    mobileLoginTitle: {
+      color: palette.ink900,
+      fontSize: 22,
+      lineHeight: 26,
+      fontWeight: '900',
+    },
+    mobileLoginSubtitle: {
+      marginTop: 2,
+      color: palette.ink700,
+      fontSize: 13,
+      lineHeight: 17,
+      fontWeight: '500',
     },
     forgotWrap: {
       alignSelf: 'flex-end',
