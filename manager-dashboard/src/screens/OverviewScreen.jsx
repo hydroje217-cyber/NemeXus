@@ -4,6 +4,7 @@ import {
   Bar,
   BarChart as RechartsBarChart,
   CartesianGrid,
+  Cell,
   LabelList,
   Legend,
   ResponsiveContainer,
@@ -159,6 +160,20 @@ function TooltipContent({ active, label, payload }) {
     return null;
   }
 
+  const row = payload[0]?.payload;
+  if (row?.stackItems?.length) {
+    return (
+      <div className="chart-tooltip">
+        <strong>{label}</strong>
+        {[...row.stackItems].reverse().map((item) => (
+          <span key={item.name} style={{ '--tooltip-color': item.fill }}>
+            {item.name}: {formatNumber(item.value)}
+          </span>
+        ))}
+      </div>
+    );
+  }
+
   const orderedPayload = [...payload].reverse();
 
   return (
@@ -185,23 +200,59 @@ function ChartValueLabel({ x, y, width, value }) {
   );
 }
 
-function StackSegmentLabel({ x, y, width, height, value, fill }) {
+function StackSegmentLabel({ x, y, width, height, value, fill, payload, segment }) {
   if (!value || value <= 0 || height < 32 || width < 24) {
     return null;
   }
 
-  const isDeepwell = fill === '#f59e0b';
+  const segmentFill = segment ? payload?.[`${segment}Fill`] : fill;
+  const isLightFill = segmentFill === '#f59e0b' || segmentFill === '#e7a321';
 
   return (
     <text
       x={x + width / 2}
       y={y + height / 2 + 4}
       textAnchor="middle"
-      className={isDeepwell ? 'recharts-stack-label dark' : 'recharts-stack-label'}
+      className={isLightFill ? 'recharts-stack-label dark' : 'recharts-stack-label'}
     >
       {formatNumber(value)}
     </text>
   );
+}
+
+function createOrderedStackRow(row, items, totalKey) {
+  const orderedItems = items
+    .map((item) => ({
+      ...item,
+      value: Number(row[item.key]) || 0,
+    }))
+    .sort((first, second) => second.value - first.value);
+  const bottom = orderedItems[0];
+  const top = orderedItems[1];
+  const totalValue = Number(row[totalKey]) || orderedItems.reduce((sum, item) => sum + item.value, 0);
+
+  return {
+    ...row,
+    bottomValue: bottom?.value ?? 0,
+    bottomName: bottom?.name ?? '',
+    bottomFill: bottom?.fill ?? '#1398aa',
+    topValue: top?.value ?? 0,
+    topName: top?.name ?? '',
+    topFill: top?.fill ?? '#1398aa',
+    [totalKey]: totalValue,
+    stackItems: orderedItems,
+  };
+}
+
+function stackSegmentRadius(row, segment) {
+  const hasBottom = row.bottomValue > 0;
+  const hasTop = row.topValue > 0;
+
+  if (!hasBottom || !hasTop) {
+    return [7, 7, 7, 7];
+  }
+
+  return segment === 'bottom' ? [0, 0, 7, 7] : [7, 7, 0, 0];
 }
 
 function SimpleBarChart({ rows, valueKey, emptyMessage, zoomLevel, daily = false }) {
@@ -249,12 +300,21 @@ function SimpleBarChart({ rows, valueKey, emptyMessage, zoomLevel, daily = false
 
 function StackedPowerChart({ rows, zoomLevel, daily = false }) {
   const visibleRows = rows ?? [];
-  const chartRows = visibleRows.map((row) => ({
-    label: row.label,
-    chlorinationPower: Number(row.chlorinationPower) || 0,
-    deepwellPower: Number(row.deepwellPower) || 0,
-    totalPower: Number(row.totalPower) || 0,
-  }));
+  const chartRows = visibleRows.map((row) =>
+    createOrderedStackRow(
+      {
+        label: row.label,
+        chlorinationPower: Number(row.chlorinationPower) || 0,
+        deepwellPower: Number(row.deepwellPower) || 0,
+        totalPower: Number(row.totalPower) || 0,
+      },
+      [
+        { key: 'chlorinationPower', name: 'Chlorination', fill: '#149a8d' },
+        { key: 'deepwellPower', name: 'Deepwell', fill: '#f59e0b' },
+      ],
+      'totalPower'
+    )
+  );
   const hasData = visibleRows.some((row) => Number(row.totalPower) > 0);
   const chartWidth = getChartWidth(chartRows.length, zoomLevel, daily);
   const chartHeight = daily ? 330 : 290;
@@ -277,11 +337,17 @@ function StackedPowerChart({ rows, zoomLevel, daily = false }) {
                 />
                 <Tooltip content={<TooltipContent />} cursor={{ fill: 'rgba(17, 106, 117, 0.08)' }} />
                 <Legend wrapperStyle={{ display: 'none' }} />
-                <Bar dataKey="chlorinationPower" name="Chlorination" stackId="power" fill="#149a8d" radius={[0, 0, 7, 7]} barSize={daily ? 22 : 36}>
-                  <LabelList dataKey="chlorinationPower" content={<StackSegmentLabel fill="#149a8d" />} />
+                <Bar dataKey="bottomValue" name="Bottom" stackId="power" radius={[0, 0, 7, 7]} barSize={daily ? 22 : 36}>
+                  {chartRows.map((row) => (
+                    <Cell key={`${row.label}-power-bottom`} fill={row.bottomFill} radius={stackSegmentRadius(row, 'bottom')} />
+                  ))}
+                  <LabelList dataKey="bottomValue" content={<StackSegmentLabel segment="bottom" />} />
                 </Bar>
-                <Bar dataKey="deepwellPower" name="Deepwell" stackId="power" fill="#f59e0b" radius={[7, 7, 0, 0]} barSize={daily ? 22 : 36}>
-                  <LabelList dataKey="deepwellPower" content={<StackSegmentLabel fill="#f59e0b" />} />
+                <Bar dataKey="topValue" name="Top" stackId="power" radius={[7, 7, 0, 0]} barSize={daily ? 22 : 36}>
+                  {chartRows.map((row) => (
+                    <Cell key={`${row.label}-power-top`} fill={row.topFill} radius={stackSegmentRadius(row, 'top')} />
+                  ))}
+                  <LabelList dataKey="topValue" content={<StackSegmentLabel segment="top" />} />
                   <LabelList dataKey="totalPower" content={<ChartValueLabel />} />
                 </Bar>
               </RechartsBarChart>
@@ -352,12 +418,21 @@ function isReadingInDateRange(reading, range) {
 
 function StackedChemicalChart({ rows, zoomLevel }) {
   const visibleRows = rows ?? [];
-  const chartRows = visibleRows.map((row) => ({
-    label: row.label,
-    chlorineUsage: Number(row.chlorineUsage) || 0,
-    peroxideUsage: Number(row.peroxideUsage) || 0,
-    totalUsage: Number(row.totalUsage) || 0,
-  }));
+  const chartRows = visibleRows.map((row) =>
+    createOrderedStackRow(
+      {
+        label: row.label,
+        chlorineUsage: Number(row.chlorineUsage) || 0,
+        peroxideUsage: Number(row.peroxideUsage) || 0,
+        totalUsage: Number(row.totalUsage) || 0,
+      },
+      [
+        { key: 'chlorineUsage', name: 'Chlorine', fill: '#0f8f7c' },
+        { key: 'peroxideUsage', name: 'Peroxide', fill: '#e7a321' },
+      ],
+      'totalUsage'
+    )
+  );
   const hasData = visibleRows.some((row) => Number(row.totalUsage) > 0);
   const chartWidth = getChartWidth(chartRows.length, zoomLevel);
   const chartHeight = 290;
@@ -380,11 +455,17 @@ function StackedChemicalChart({ rows, zoomLevel }) {
                 />
                 <Tooltip content={<TooltipContent />} cursor={{ fill: 'rgba(17, 106, 117, 0.08)' }} />
                 <Legend wrapperStyle={{ display: 'none' }} />
-                <Bar dataKey="chlorineUsage" name="Chlorine" stackId="chemical" fill="#0f8f7c" radius={[0, 0, 7, 7]} barSize={36}>
-                  <LabelList dataKey="chlorineUsage" content={<StackSegmentLabel fill="#0f8f7c" />} />
+                <Bar dataKey="bottomValue" name="Bottom" stackId="chemical" radius={[0, 0, 7, 7]} barSize={36}>
+                  {chartRows.map((row) => (
+                    <Cell key={`${row.label}-chemical-bottom`} fill={row.bottomFill} radius={stackSegmentRadius(row, 'bottom')} />
+                  ))}
+                  <LabelList dataKey="bottomValue" content={<StackSegmentLabel segment="bottom" />} />
                 </Bar>
-                <Bar dataKey="peroxideUsage" name="Peroxide" stackId="chemical" fill="#e7a321" radius={[7, 7, 0, 0]} barSize={36}>
-                  <LabelList dataKey="peroxideUsage" content={<StackSegmentLabel fill="#e7a321" />} />
+                <Bar dataKey="topValue" name="Top" stackId="chemical" radius={[7, 7, 0, 0]} barSize={36}>
+                  {chartRows.map((row) => (
+                    <Cell key={`${row.label}-chemical-top`} fill={row.topFill} radius={stackSegmentRadius(row, 'top')} />
+                  ))}
+                  <LabelList dataKey="topValue" content={<StackSegmentLabel segment="top" />} />
                   <LabelList dataKey="totalUsage" content={<ChartValueLabel />} />
                 </Bar>
               </RechartsBarChart>
@@ -430,14 +511,14 @@ function getCurrentShift(date = new Date()) {
   const hour = date.getHours();
 
   if (hour >= 7 && hour < 15) {
-    return 'SHIFT 1 (7AM - 3PM)';
+    return 'SHIFT A (7AM - 3PM)';
   }
 
   if (hour >= 15 && hour < 23) {
-    return 'SHIFT 2 (3PM - 11PM)';
+    return 'SHIFT B (3PM - 11PM)';
   }
 
-  return 'SHIFT 3 (11PM - 7AM)';
+  return 'SHIFT C (11PM - 7AM)';
 }
 
 function getCurrentShiftWindow(date = new Date()) {
@@ -509,7 +590,7 @@ export function buildOperationAlerts(dashboard) {
         key: `missing-${siteType}`,
         severity: 'warning',
         title: `${siteType === 'CHLORINATION' ? 'Chlorination' : 'Deepwell'} shift reading missing`,
-        detail: `No ${siteType.toLowerCase()} reading has been received for ${getCurrentShift().toLowerCase()}.`,
+        detail: `No ${siteType.toLowerCase()} reading has been received for ${getCurrentShift()}.`,
       });
     }
   });

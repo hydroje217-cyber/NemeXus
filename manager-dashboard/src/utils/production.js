@@ -199,9 +199,15 @@ export function aggregateDailyRows(items, fieldConfigs, options = {}) {
         id: `avg:${date}`,
         date,
       };
+      const usesDailySummaries = rows.some((row) => row?.is_daily_summary);
 
       fieldConfigs.forEach((config) => {
         if (config.aggregate === 'previousDayDifference') {
+          if (usesDailySummaries) {
+            result[config.key] = sumForField(rows, config.field);
+            return;
+          }
+
           result[config.key] = previousDayDifferenceByGroup(date, previousDayDifferenceMaps[config.key]);
           return;
         }

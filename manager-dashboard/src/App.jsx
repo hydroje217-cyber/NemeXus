@@ -136,6 +136,7 @@ export default function App() {
 
     const channel = supabase
       .channel('manager-dashboard-freshness')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'daily_site_summaries' }, scheduleRefresh)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'chlorination_readings' }, scheduleRefresh)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'deepwell_readings' }, scheduleRefresh)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'profiles' }, scheduleRefresh)
@@ -219,7 +220,7 @@ export default function App() {
   }
 
   if (loading) {
-    return <LoadingScreen />;
+    return <LoadingScreen activeView={activeView} themeMode={themeMode} />;
   }
 
   if (!canUseDashboard) {

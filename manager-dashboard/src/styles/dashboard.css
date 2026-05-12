@@ -229,6 +229,8 @@
 
 .operation-alerts-panel {
   --operation-alert-card-height: 86px;
+  --operation-alert-card-gap: 10px;
+  --operation-alert-card-peek: calc(var(--operation-alert-card-height) / 8);
   min-width: 0;
   background: #ffffff;
   border: 1px solid #dbe5e8;
@@ -238,7 +240,7 @@
   display: grid;
   gap: 14px;
   grid-template-rows: auto minmax(0, 1fr);
-  min-height: 316px;
+  align-self: start;
 }
 
 .operation-alerts-panel.has-alerts {
@@ -270,7 +272,7 @@
 .operation-alert-grid {
   display: grid;
   grid-template-columns: 1fr;
-  gap: 10px;
+  gap: var(--operation-alert-card-gap);
 }
 
 .operation-alert-scroll {
@@ -281,7 +283,11 @@
 }
 
 .operation-alert-scroll.has-peek {
-  max-height: calc((var(--operation-alert-card-height) * 2.5) + 20px);
+  max-height: calc(
+    (var(--operation-alert-card-height) * 2) +
+    (var(--operation-alert-card-gap) * 2) +
+    var(--operation-alert-card-peek)
+  );
 }
 
 .operation-alert-card {
@@ -296,9 +302,48 @@
   gap: 6px;
 }
 
+.operation-alert-card-head {
+  min-width: 0;
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
 .operation-alert-card strong {
   color: #102236;
   font-size: 0.9rem;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.alert-severity-badge {
+  flex: 0 0 auto;
+  min-height: 22px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  padding: 0 8px;
+  font-size: 0.68rem;
+  font-weight: 900;
+  line-height: 1;
+  text-transform: uppercase;
+}
+
+.alert-severity-badge.critical {
+  background: #fee2e2;
+  color: #991b1b;
+}
+
+.alert-severity-badge.warning {
+  background: #fef3c7;
+  color: #92400e;
+}
+
+.alert-severity-badge.info {
+  background: #dff7fb;
+  color: #0e6671;
 }
 
 .operation-alert-card p {
@@ -406,7 +451,7 @@
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 14px;
-  align-items: stretch;
+  align-items: start;
 }
 
 .overview-top-grid.summary-hidden {
@@ -419,15 +464,20 @@
   }
 
   .operation-alerts-panel {
-    height: 100%;
+    height: auto;
+  }
+
+  .operation-alert-scroll {
+    max-height: calc((var(--operation-alert-card-height) * 2) + var(--operation-alert-card-gap));
     min-height: 0;
   }
 
-  .operation-alert-scroll,
   .operation-alert-scroll.has-peek {
-    max-height: none;
-    min-height: 0;
-    overflow-y: auto;
+    max-height: calc(
+      (var(--operation-alert-card-height) * 2) +
+      (var(--operation-alert-card-gap) * 2) +
+      var(--operation-alert-card-peek)
+    );
   }
 }
 

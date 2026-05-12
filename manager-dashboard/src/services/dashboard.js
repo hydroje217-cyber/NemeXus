@@ -10,6 +10,9 @@ import {
 
 const OFFICE_ROLES = new Set(['manager', 'supervisor', 'admin']);
 
+const DAILY_SUMMARY_SELECT =
+  'id, site_id, summary_date, source, source_file, production_m3, power_kwh, chlorine_kg, avg_flowrate_m3hr, avg_pressure_psi, avg_rc_ppm, avg_turbidity_ntu, avg_ph, avg_tds_ppm, peroxide_liters, operating_hours, scheduled_downtime_hours, unscheduled_downtime_hours, avg_upstream_pressure_psi, avg_downstream_pressure_psi, avg_vfd_frequency_hz, avg_voltage_l1_v, avg_voltage_l2_v, avg_voltage_l3_v, avg_amperage_a, created_at, updated_at, site:sites!inner(id, name, type)';
+
 function startOfTodayIso() {
   const now = new Date();
   return new Date(now.getFullYear(), now.getMonth(), now.getDate()).toISOString();
@@ -22,8 +25,50 @@ function normalizeReading(row, siteType) {
   };
 }
 
+function summaryDateToIso(summaryDate) {
+  return summaryDate ? `${summaryDate}T00:00:00.000Z` : null;
+}
+
+function normalizeDailySummary(row) {
+  const siteType = row.site?.type || 'CHLORINATION';
+  const readingDate = summaryDateToIso(row.summary_date) || row.created_at;
+
+  return normalizeReading(
+    {
+      ...row,
+      is_daily_summary: true,
+      reading_datetime: readingDate,
+      slot_datetime: readingDate,
+      status: row.source || 'daily summary',
+      totalizer: row.production_m3,
+      pressure_psi: row.avg_pressure_psi,
+      rc_ppm: row.avg_rc_ppm,
+      turbidity_ntu: row.avg_turbidity_ntu,
+      ph: row.avg_ph,
+      tds_ppm: row.avg_tds_ppm,
+      flowrate_m3hr: row.avg_flowrate_m3hr,
+      chlorine_consumed: row.chlorine_kg,
+      peroxide_consumption: row.peroxide_liters,
+      chlorination_power_kwh: row.power_kwh,
+      upstream_pressure_psi: row.avg_upstream_pressure_psi,
+      downstream_pressure_psi: row.avg_downstream_pressure_psi,
+      vfd_frequency_hz: row.avg_vfd_frequency_hz,
+      voltage_l1_v: row.avg_voltage_l1_v,
+      voltage_l2_v: row.avg_voltage_l2_v,
+      voltage_l3_v: row.avg_voltage_l3_v,
+      amperage_a: row.avg_amperage_a,
+      power_kwh_shift: row.power_kwh,
+      submitted_profile: null,
+    },
+    siteType
+  );
+}
+
 function sortByCreatedAtDesc(a, b) {
-  return new Date(b.created_at || 0).getTime() - new Date(a.created_at || 0).getTime();
+  return (
+    new Date(b.slot_datetime || b.reading_datetime || b.created_at || 0).getTime() -
+    new Date(a.slot_datetime || a.reading_datetime || a.created_at || 0).getTime()
+  );
 }
 
 function throwIfError(result, message) {
@@ -58,14 +103,11 @@ export async function getDashboardSnapshot({ limit = 50 } = {}) {
     totalOperators,
     approvedOperators,
     sitesCount,
-    todayChlorination,
-    todayDeepwell,
-    recentChlorination,
-    recentDeepwell,
+    todaySummaries,
+    recentSummaries,
     profiles,
     operators,
-    monthlyChlorination,
-    monthlyDeepwell,
+    monthlySummaries,
   ] = await Promise.all([
     supabase
       .from('profiles')
@@ -82,21 +124,14 @@ export async function getDashboardSnapshot({ limit = 50 } = {}) {
       .eq('is_active', true)
       .eq('is_approved', true),
     supabase.from('sites').select('id', { count: 'exact', head: true }),
-    supabase.from('chlorination_readings').select('id', { count: 'exact', head: true }).gte('created_at', todayIso),
-    supabase.from('deepwell_readings').select('id', { count: 'exact', head: true }).gte('created_at', todayIso),
     supabase
-      .from('chlorination_readings')
-      .select(
-        'id, status, created_at, reading_datetime, slot_datetime, pressure_psi, rc_ppm, turbidity_ntu, ph, tds_ppm, totalizer, chlorination_power_kwh, site:sites(name, type), submitted_profile:profiles!chlorination_readings_submitted_by_fkey(full_name, email)'
-      )
-      .order('created_at', { ascending: false })
-      .limit(limit),
+      .from('daily_site_summaries')
+      .select('id', { count: 'exact', head: true })
+      .gte('summary_date', todayIso.slice(0, 10)),
     supabase
-      .from('deepwell_readings')
-      .select(
-        'id, status, created_at, reading_datetime, slot_datetime, upstream_pressure_psi, downstream_pressure_psi, flowrate_m3hr, tds_ppm, power_kwh_shift, voltage_l1_v, voltage_l2_v, voltage_l3_v, amperage_a, site:sites(name, type), submitted_profile:profiles!deepwell_readings_submitted_by_fkey(full_name, email)'
-      )
-      .order('created_at', { ascending: false })
+      .from('daily_site_summaries')
+      .select(DAILY_SUMMARY_SELECT)
+      .order('summary_date', { ascending: false })
       .limit(limit),
     supabase
       .from('profiles')
@@ -110,36 +145,29 @@ export async function getDashboardSnapshot({ limit = 50 } = {}) {
       .order('full_name', { ascending: true, nullsFirst: false })
       .order('email', { ascending: true, nullsFirst: false }),
     supabase
-      .from('chlorination_readings')
-      .select('id, site_id, status, created_at, reading_datetime, slot_datetime, totalizer, chlorine_consumed, peroxide_consumption, chlorination_power_kwh')
-      .gte('reading_datetime', startOfMonthlyProductionSourceIso())
-      .order('reading_datetime', { ascending: true }),
-    supabase
-      .from('deepwell_readings')
-      .select('id, site_id, status, created_at, reading_datetime, slot_datetime, power_kwh_shift')
-      .gte('reading_datetime', startOfMonthlyProductionSourceIso())
-      .order('reading_datetime', { ascending: true }),
+      .from('daily_site_summaries')
+      .select(DAILY_SUMMARY_SELECT)
+      .gte('summary_date', startOfMonthlyProductionSourceIso().slice(0, 10))
+      .order('summary_date', { ascending: true }),
   ]);
 
   throwIfError(pendingApprovals, 'Failed to load pending approvals.');
   throwIfError(totalOperators, 'Failed to count operators.');
   throwIfError(approvedOperators, 'Failed to count approved operators.');
   throwIfError(sitesCount, 'Failed to count sites.');
-  throwIfError(todayChlorination, 'Failed to count chlorination readings.');
-  throwIfError(todayDeepwell, 'Failed to count deepwell readings.');
-  throwIfError(recentChlorination, 'Failed to load recent chlorination readings.');
-  throwIfError(recentDeepwell, 'Failed to load recent deepwell readings.');
+  throwIfError(todaySummaries, 'Failed to count daily site summaries.');
+  throwIfError(recentSummaries, 'Failed to load recent daily site summaries.');
   throwIfError(profiles, 'Failed to load accounts.');
   throwIfError(operators, 'Failed to load operators.');
-  throwIfError(monthlyChlorination, 'Failed to load monthly chlorination production.');
-  throwIfError(monthlyDeepwell, 'Failed to load monthly deepwell power consumption.');
+  throwIfError(monthlySummaries, 'Failed to load monthly daily site summaries.');
 
-  const recentReadings = [
-    ...(recentChlorination.data ?? []).map((row) => normalizeReading(row, 'CHLORINATION')),
-    ...(recentDeepwell.data ?? []).map((row) => normalizeReading(row, 'DEEPWELL')),
-  ]
+  const recentReadings = (recentSummaries.data ?? [])
+    .map(normalizeDailySummary)
     .sort(sortByCreatedAtDesc)
     .slice(0, limit);
+  const monthlyRows = (monthlySummaries.data ?? []).map(normalizeDailySummary);
+  const monthlyChlorination = monthlyRows.filter((row) => row.site_type === 'CHLORINATION');
+  const monthlyDeepwell = monthlyRows.filter((row) => row.site_type === 'DEEPWELL');
 
   return {
     stats: {
@@ -147,22 +175,22 @@ export async function getDashboardSnapshot({ limit = 50 } = {}) {
       approvedOperators: approvedOperators.count ?? 0,
       pendingOperators: pendingApprovals.data?.length ?? 0,
       totalSites: sitesCount.count ?? 0,
-      todayReadings: (todayChlorination.count ?? 0) + (todayDeepwell.count ?? 0),
+      todayReadings: todaySummaries.count ?? 0,
     },
     pendingApprovals: pendingApprovals.data ?? [],
     recentReadings,
     profiles: profiles.data ?? [],
     operators: operators.data ?? [],
-    monthlyProduction: buildMonthlyProduction(monthlyChlorination.data ?? []),
-    dailyProduction: buildDailyProduction(monthlyChlorination.data ?? []),
-    monthlyChemicalUsage: buildMonthlyChemicalUsage(monthlyChlorination.data ?? []),
+    monthlyProduction: buildMonthlyProduction(monthlyChlorination),
+    dailyProduction: buildDailyProduction(monthlyChlorination),
+    monthlyChemicalUsage: buildMonthlyChemicalUsage(monthlyChlorination),
     monthlyPowerConsumption: buildMonthlyPowerConsumption({
-      chlorinationReadings: monthlyChlorination.data ?? [],
-      deepwellReadings: monthlyDeepwell.data ?? [],
+      chlorinationReadings: monthlyChlorination,
+      deepwellReadings: monthlyDeepwell,
     }),
     dailyPowerConsumption: buildDailyPowerConsumption({
-      chlorinationReadings: monthlyChlorination.data ?? [],
-      deepwellReadings: monthlyDeepwell.data ?? [],
+      chlorinationReadings: monthlyChlorination,
+      deepwellReadings: monthlyDeepwell,
     }),
   };
 }

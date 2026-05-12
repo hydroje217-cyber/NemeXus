@@ -5,6 +5,26 @@ import { aggregateDailyRows } from '../utils/production';
 
 const CHLORINATION = 'CHLORINATION';
 const DEEPWELL = 'DEEPWELL';
+const DEFAULT_LIMIT = '50';
+
+function formatDateInputValue(date) {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+
+  return `${year}-${month}-${day}`;
+}
+
+function getCurrentMonthDateRange() {
+  const today = new Date();
+  const startOfMonth = new Date(today.getFullYear(), today.getMonth(), 1);
+  const endOfMonth = new Date(today.getFullYear(), today.getMonth() + 1, 0);
+
+  return {
+    fromDate: formatDateInputValue(startOfMonth),
+    toDate: formatDateInputValue(endOfMonth),
+  };
+}
 
 function formatShortDateTime(value) {
   if (!value) {
@@ -296,10 +316,11 @@ function ExportMenu({ exporting, open, onToggle, onSelect }) {
 }
 
 export default function ReadingsScreen({ selectedTableMode = CHLORINATION }) {
+  const initialDateRange = getCurrentMonthDateRange();
   const [tableMode, setTableMode] = useState(selectedTableMode);
-  const [fromDate, setFromDate] = useState('');
-  const [toDate, setToDate] = useState('');
-  const [limit, setLimit] = useState('50');
+  const [fromDate, setFromDate] = useState(initialDateRange.fromDate);
+  const [toDate, setToDate] = useState(initialDateRange.toDate);
+  const [limit, setLimit] = useState(DEFAULT_LIMIT);
   const [siteFilter, setSiteFilter] = useState('all');
   const [statusFilter, setStatusFilter] = useState('all');
   const [searchTerm, setSearchTerm] = useState('');
@@ -526,15 +547,17 @@ export default function ReadingsScreen({ selectedTableMode = CHLORINATION }) {
   }, [searchTerm, siteFilter, statusFilter, pageSize, visibleTable]);
 
   async function handleReset() {
-    setFromDate('');
-    setToDate('');
-    setLimit('8');
+    const defaultDateRange = getCurrentMonthDateRange();
+
+    setFromDate(defaultDateRange.fromDate);
+    setToDate(defaultDateRange.toDate);
+    setLimit(DEFAULT_LIMIT);
     setSiteFilter('all');
     setStatusFilter('all');
     setSearchTerm('');
     setPageSize('25');
     setSelectedReading(null);
-    await loadHistory({ fromDate: '', toDate: '', limit: '8' });
+    await loadHistory({ ...defaultDateRange, limit: DEFAULT_LIMIT });
   }
 
   async function handleExport(nextFormat = exportFormat) {
@@ -608,8 +631,9 @@ export default function ReadingsScreen({ selectedTableMode = CHLORINATION }) {
             </span>
             <h3>Office filters</h3>
           </div>
-          <button type="button" className="icon-button subtle" onClick={handleReset} aria-label="Reset filters">
+          <button type="button" className="icon-button subtle filter-default-button" onClick={handleReset}>
             <RefreshCw size={18} />
+            <span>Default</span>
           </button>
         </header>
 
@@ -633,7 +657,7 @@ export default function ReadingsScreen({ selectedTableMode = CHLORINATION }) {
             </button>
           </div>
 
-          <label className="readings-field">
+          <label className="readings-field date-field">
             <span>From date</span>
             <div className="input-with-icon">
               <CalendarDays size={17} />
@@ -641,7 +665,7 @@ export default function ReadingsScreen({ selectedTableMode = CHLORINATION }) {
             </div>
           </label>
 
-          <label className="readings-field">
+          <label className="readings-field date-field">
             <span>To date</span>
             <div className="input-with-icon">
               <CalendarDays size={17} />
@@ -649,7 +673,7 @@ export default function ReadingsScreen({ selectedTableMode = CHLORINATION }) {
             </div>
           </label>
 
-          <label className="readings-field full">
+          <label className="readings-field limit-field">
             <span>Limit</span>
             <div className="input-with-icon">
               <List size={17} />
