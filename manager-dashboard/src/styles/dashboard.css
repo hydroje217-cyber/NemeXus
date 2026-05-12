@@ -12,6 +12,65 @@
   gap: 10px;
 }
 
+.topbar-title-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+}
+
+.topbar-title-copy {
+  min-width: 0;
+}
+
+.topbar-menu-button,
+.mobile-title-refresh {
+  display: none;
+}
+
+.topbar-status-row {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+  min-width: 0;
+}
+
+.status-strip {
+  display: flex;
+  align-items: center;
+  flex-wrap: nowrap;
+  gap: 8px;
+  min-width: 0;
+}
+
+.status-pill {
+  min-height: 36px;
+  border: 1px solid #cfe0e5;
+  border-radius: 999px;
+  background: #ffffff;
+  color: #4b5d66;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 12px;
+  font-size: 0.78rem;
+  font-weight: 900;
+  white-space: nowrap;
+}
+
+.status-pill.connected {
+  border-color: #b9e5d2;
+  background: #f0fbf5;
+  color: #0f7a4f;
+}
+
+.status-pill.warning {
+  border-color: #f0d58d;
+  background: #fff8e7;
+  color: #8a5b09;
+}
+
 .freshness-pill {
   min-height: 36px;
   border: 1px solid #cfe0e5;
@@ -347,11 +406,29 @@
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 14px;
-  align-items: start;
+  align-items: stretch;
 }
 
 .overview-top-grid.summary-hidden {
   grid-template-columns: 1fr;
+}
+
+@media (min-width: 981px) and (max-width: 1600px) {
+  .overview-top-grid {
+    grid-template-columns: minmax(360px, 0.82fr) minmax(0, 1.18fr);
+  }
+
+  .operation-alerts-panel {
+    height: 100%;
+    min-height: 0;
+  }
+
+  .operation-alert-scroll,
+  .operation-alert-scroll.has-peek {
+    max-height: none;
+    min-height: 0;
+    overflow-y: auto;
+  }
 }
 
 .live-summary-panel {
@@ -368,7 +445,7 @@
 
 .live-summary-grid {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(132px, 1fr));
   gap: 10px;
 }
 
@@ -385,6 +462,10 @@
   gap: 12px;
 }
 
+.live-summary-card > div {
+  min-width: 0;
+}
+
 .live-summary-card:nth-child(4),
 .live-summary-card:nth-child(5) {
   grid-column: span 1;
@@ -399,7 +480,9 @@
   color: #60727c;
   font-size: 0.78rem;
   font-weight: 900;
+  line-height: 1.2;
   text-transform: uppercase;
+  overflow-wrap: anywhere;
 }
 
 .live-summary-card strong {
