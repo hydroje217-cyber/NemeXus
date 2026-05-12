@@ -71,13 +71,18 @@ function getMonthProductionRange({ year, monthIndex }) {
 }
 
 function getYearAnalyticsRange(year) {
+  const today = new Date();
+  const currentYear = today.getFullYear();
   const yearStart = new Date(year, 0, 1);
   const yearEnd = new Date(year, 11, 31, 23, 59, 59, 999);
+  const chartEnd = year === currentYear ? today : yearEnd;
   const previousDayStart = new Date(year, 0, 0);
   const nextYearStart = new Date(year + 1, 0, 1);
+  const monthCount = year === currentYear ? today.getMonth() + 1 : 12;
 
   return {
-    chartEnd: yearEnd,
+    chartEnd,
+    monthCount,
     readingFromIso: previousDayStart.toISOString(),
     readingToIso: nextYearStart.toISOString(),
     summaryFromDate: createDayKey(yearStart),
@@ -125,7 +130,7 @@ export async function getMonthlyAnalyticsForYear({ year }) {
   const deepwellReadings = deepwellReadingsResult.data ?? [];
   const options = {
     now: range.chartEnd,
-    monthCount: 12,
+    monthCount: range.monthCount,
     dailySummaries,
   };
 
