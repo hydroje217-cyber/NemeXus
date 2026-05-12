@@ -12,12 +12,63 @@
   gap: 10px;
 }
 
+.topbar-title-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+}
+
+.topbar-title-copy {
+  min-width: 0;
+}
+
+.topbar-menu-button,
+.mobile-title-refresh {
+  display: none;
+}
+
 .topbar-status-row {
   display: flex;
   align-items: center;
   justify-content: flex-end;
   gap: 10px;
   min-width: 0;
+}
+
+.status-strip {
+  display: flex;
+  align-items: center;
+  flex-wrap: nowrap;
+  gap: 8px;
+  min-width: 0;
+}
+
+.status-pill {
+  min-height: 36px;
+  border: 1px solid #cfe0e5;
+  border-radius: 999px;
+  background: #ffffff;
+  color: #4b5d66;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 12px;
+  font-size: 0.78rem;
+  font-weight: 900;
+  white-space: nowrap;
+}
+
+.status-pill.connected {
+  border-color: #b9e5d2;
+  background: #f0fbf5;
+  color: #0f7a4f;
+}
+
+.status-pill.warning {
+  border-color: #f0d58d;
+  background: #fff8e7;
+  color: #8a5b09;
 }
 
 .freshness-pill {
@@ -47,58 +98,6 @@
   margin: 2px 0 0;
   font-size: 1.65rem;
   letter-spacing: 0;
-}
-
-.topbar-title-row {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-}
-
-.topbar-title-copy {
-  min-width: 0;
-}
-
-.topbar-menu-button {
-  display: none;
-}
-
-.mobile-title-refresh {
-  display: none;
-}
-
-.status-strip {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-  margin-top: 0;
-}
-
-.status-pill {
-  min-height: 28px;
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  padding: 0 9px;
-  border: 1px solid #d2e1e6;
-  border-radius: 999px;
-  background: #ffffff;
-  color: #4b5d66;
-  font-size: 0.72rem;
-  font-weight: 900;
-  white-space: nowrap;
-}
-
-.status-pill.connected {
-  border-color: #b9e5d2;
-  background: #eefbf4;
-  color: #11633a;
-}
-
-.status-pill.warning {
-  border-color: #efd590;
-  background: #fff7df;
-  color: #765310;
 }
 
 .eyebrow {
@@ -229,7 +228,7 @@
 }
 
 .operation-alerts-panel {
-  --operation-alert-card-height: 88px;
+  --operation-alert-card-height: 86px;
   min-width: 0;
   background: #ffffff;
   border: 1px solid #dbe5e8;
@@ -297,43 +296,9 @@
   gap: 6px;
 }
 
-.operation-alert-card-head {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 10px;
-}
-
 .operation-alert-card strong {
   color: #102236;
   font-size: 0.9rem;
-}
-
-.alert-severity-badge {
-  flex: 0 0 auto;
-  min-height: 22px;
-  display: inline-flex;
-  align-items: center;
-  padding: 0 8px;
-  border-radius: 999px;
-  font-size: 0.62rem;
-  font-weight: 900;
-  text-transform: uppercase;
-}
-
-.alert-severity-badge.critical {
-  background: #fee2e2;
-  color: #991b1b;
-}
-
-.alert-severity-badge.warning {
-  background: #fef3c7;
-  color: #92400e;
-}
-
-.alert-severity-badge.info {
-  background: #dff7fb;
-  color: #0e6671;
 }
 
 .operation-alert-card p {
@@ -454,7 +419,7 @@
   }
 
   .operation-alerts-panel {
-    height: 368px;
+    height: 100%;
     min-height: 0;
   }
 
@@ -462,6 +427,7 @@
   .operation-alert-scroll.has-peek {
     max-height: none;
     min-height: 0;
+    overflow-y: auto;
   }
 }
 
@@ -485,7 +451,7 @@
 
 .live-summary-card {
   min-width: 0;
-  min-height: 70px;
+  min-height: 88px;
   border: 1px solid #d3dde3;
   border-radius: 8px;
   background: #f8fbfc;
@@ -1061,24 +1027,16 @@
 }
 
 .chart-toolbar {
-  min-height: 44px;
+  min-height: 54px;
   border: 1px solid #dbe5e8;
   border-radius: 8px;
   background: #f9fcff;
-  padding: 6px 8px;
+  padding: 10px;
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 10px;
   width: 100%;
-  opacity: 0.88;
-  transition: opacity 0.18s ease, border-color 0.18s ease;
-}
-
-.analytics-panel:hover .chart-toolbar,
-.chart-toolbar:focus-within {
-  opacity: 1;
-  border-color: #b8d7df;
 }
 
 .chart-toolbar > span {
@@ -1095,10 +1053,10 @@
 }
 
 .chart-toolbar button {
-  width: 30px;
-  min-width: 30px;
-  min-height: 30px;
-  height: 30px;
+  width: 32px;
+  min-width: 32px;
+  min-height: 32px;
+  height: 32px;
   padding: 0;
   border: 1px solid #dbe5e8;
   background: #ffffff;
@@ -1313,10 +1271,6 @@
 .chart-empty {
   margin: 0;
   color: #60727c;
-  border: 1px dashed #c8d8de;
-  border-radius: 8px;
-  background: #f8fbfc;
-  padding: 14px;
   font-weight: 700;
 }
 
