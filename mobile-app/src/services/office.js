@@ -234,7 +234,7 @@ export async function getOfficeDashboardSnapshot({ limit = 12 } = {}) {
     supabase
       .from('chlorination_readings')
       .select(
-        'id, status, created_at, reading_datetime, slot_datetime, totalizer, site:sites(name, type), submitted_profile:profiles!chlorination_readings_submitted_by_fkey(full_name, email)'
+        'id, status, created_at, reading_datetime, slot_datetime, totalizer, ph, rc_ppm, site:sites(name, type), submitted_profile:profiles!chlorination_readings_submitted_by_fkey(full_name, email)'
       )
       .order('created_at', { ascending: false })
       .limit(limit),

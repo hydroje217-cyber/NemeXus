@@ -11,6 +11,7 @@ import AuthScreen from './screens/AuthScreen';
 import LoadingScreen from './screens/LoadingScreen';
 import OfficeDashboardScreen from './screens/OfficeDashboardScreen';
 import OfficeGraphsScreen from './screens/OfficeGraphsScreen';
+import OfficeBottomNav from './components/OfficeBottomNav';
 import PendingApprovalScreen from './screens/PendingApprovalScreen';
 import SetupRequiredScreen from './screens/SetupRequiredScreen';
 import SiteSelectionScreen from './screens/SiteSelectionScreen';
@@ -189,9 +190,9 @@ export default function NemeXusApp() {
   } else if (!isApprovedForApp) {
     screen = <PendingApprovalScreen />;
   } else if ((routeName === 'site-selection' || routeName === 'submit-reading') && !isOperator) {
-    screen = <OfficeDashboardScreen navigation={navigation} />;
+    screen = <OfficeDashboardScreen navigation={navigation} initialSection={route.params?.section} />;
   } else if (routeName === 'office-dashboard') {
-    screen = <OfficeDashboardScreen navigation={navigation} />;
+    screen = <OfficeDashboardScreen navigation={navigation} initialSection={route.params?.section} />;
   } else if (routeName === 'office-graphs' && isPrivileged) {
     screen = <OfficeGraphsScreen navigation={navigation} />;
   } else if (routeName === 'site-selection') {
@@ -213,13 +214,32 @@ export default function NemeXusApp() {
     );
   }
 
+  const showOfficeBottomNav =
+    isPrivileged &&
+    (routeName === 'office-dashboard' ||
+      routeName === 'office-graphs' ||
+      (routeName === 'reading-history' && route.params?.source === 'office-dashboard'));
+  const bottomNavActiveKey =
+    routeName === 'office-graphs'
+      ? 'graphs'
+      : routeName === 'reading-history'
+        ? 'history'
+        : route.params?.section === 'notifications'
+          ? 'notifications'
+          : 'dashboard';
+
   return (
     <SafeAreaView
       style={styles.safeArea}
       edges={['top', 'left', 'right']}
     >
       <ExpoStatusBar style={statusBar} />
-      <View style={styles.appFrame}>{screen}</View>
+      <View style={styles.appFrame}>
+        <View style={styles.screenFrame}>{screen}</View>
+        {showOfficeBottomNav ? (
+          <OfficeBottomNav activeKey={bottomNavActiveKey} navigation={navigation} />
+        ) : null}
+      </View>
     </SafeAreaView>
   );
 }
@@ -233,6 +253,9 @@ function createStyles(palette) {
     appFrame: {
       flex: 1,
       backgroundColor: palette.canvas,
+    },
+    screenFrame: {
+      flex: 1,
     },
   });
 }

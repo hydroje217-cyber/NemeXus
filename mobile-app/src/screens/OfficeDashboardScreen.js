@@ -1,11 +1,12 @@
 import { useEffect, useMemo, useState } from 'react';
-import { ActivityIndicator, Modal, Pressable, ScrollView, StyleSheet, Text, View, useWindowDimensions } from 'react-native';
+import { Modal, Pressable, ScrollView, StyleSheet, Text, View, useWindowDimensions } from 'react-native';
 import Ionicons from '@expo/vector-icons/Ionicons';
 import LottieView from 'lottie-react-native';
 import Card from '../components/Card';
 import MessageBanner from '../components/MessageBanner';
 import PrimaryButton from '../components/PrimaryButton';
 import ScreenShell from '../components/ScreenShell';
+import { LoadingState } from '../components/UiControls';
 import { useAuth } from '../context/AuthContext';
 import { useTheme } from '../context/ThemeContext';
 import { supabase } from '../lib/supabase';
@@ -82,6 +83,17 @@ function formatMaybeTimestamp(value) {
 
   const parsed = new Date(value);
   return Number.isNaN(parsed.getTime()) ? value : formatTimestamp(parsed);
+}
+
+function formatHeaderUpdatedTime(value) {
+  if (!(value instanceof Date)) {
+    return '--:--';
+  }
+
+  return value.toLocaleTimeString('en-US', {
+    hour: '2-digit',
+    minute: '2-digit',
+  });
 }
 
 function formatRecordedValue(value, unit) {
@@ -278,6 +290,272 @@ function getCurrentShiftKey(now = new Date()) {
   return getShiftKeyForMinutes(getMinutesSinceMidnight(now));
 }
 
+function getShiftLabelForKey(key) {
+  return {
+    a: 'A-Shift',
+    b: 'B-Shift',
+    c: 'C-Shift',
+  }[key] || 'Current shift';
+}
+
+function getCurrentShiftWindow(now = new Date()) {
+  const start = new Date(now);
+  const end = new Date(now);
+  const hour = now.getHours();
+
+  if (hour >= 7 && hour < 15) {
+    start.setHours(7, 0, 0, 0);
+    end.setHours(15, 0, 0, 0);
+  } else if (hour >= 15 && hour < 23) {
+    start.setHours(15, 0, 0, 0);
+    end.setHours(23, 0, 0, 0);
+  } else if (hour >= 23) {
+    start.setHours(23, 0, 0, 0);
+    end.setDate(end.getDate() + 1);
+    end.setHours(7, 0, 0, 0);
+  } else {
+    start.setDate(start.getDate() - 1);
+    start.setHours(23, 0, 0, 0);
+    end.setHours(7, 0, 0, 0);
+  }
+
+  return { start: start.getTime(), end: end.getTime() };
+}
+
+function getReadingTime(reading) {
+  const parsed = new Date(reading?.slot_datetime || reading?.reading_datetime || reading?.created_at);
+  return Number.isNaN(parsed.getTime()) ? 0 : parsed.getTime();
+}
+
+function getReadingSiteName(reading) {
+  return reading?.site?.name || reading?.sites?.name || (reading?.site_type === 'DEEPWELL' ? 'Deepwell site' : 'Chlorination site');
+}
+
+function addOperationRangeAlert(alerts, reading, field, label, min, max, unit = '') {
+  const value = Number(reading?.[field]);
+
+  if (!Number.isFinite(value) || (value >= min && value <= max)) {
+    return;
+  }
+
+  alerts.push({
+    key: `${reading.site_type || 'site'}-${reading.id || field}-${field}`,
+    severity: value < min ? 'warning' : 'critical',
+    title: `${label} outside target`,
+    detail: `${getReadingSiteName(reading)} reported ${value}${unit ? ` ${unit}` : ''}; target is ${min}-${max}${unit ? ` ${unit}` : ''}.`,
+  });
+}
+
+function buildOperationAlerts(dashboard, nowDate = new Date()) {
+  const alerts = [];
+  const readings = dashboard?.recentReadings ?? [];
+  const now = nowDate.getTime();
+  const newestReadingTime = readings.reduce((latest, reading) => Math.max(latest, getReadingTime(reading)), 0);
+  const { start, end } = getCurrentShiftWindow(nowDate);
+  const currentShiftReadings = readings.filter((reading) => {
+    const time = getReadingTime(reading);
+    return time >= start && time < end;
+  });
+  const currentShiftLabel = getShiftLabelForKey(getCurrentShiftKey(nowDate));
+
+  if (newestReadingTime && now - newestReadingTime > 8 * 60 * 60 * 1000) {
+    alerts.push({
+      key: 'stale-readings',
+      severity: 'critical',
+      title: 'No recent readings',
+      detail: `Latest reading was ${formatMaybeTimestamp(newestReadingTime)}.`,
+    });
+  }
+
+  ['CHLORINATION', 'DEEPWELL'].forEach((siteType) => {
+    if (!currentShiftReadings.some((reading) => reading.site_type === siteType)) {
+      alerts.push({
+        key: `missing-${siteType}`,
+        severity: 'warning',
+        title: `${siteType === 'CHLORINATION' ? 'Chlorination' : 'Deepwell'} shift reading missing`,
+        detail: `No ${siteType.toLowerCase()} reading has been received for ${currentShiftLabel}.`,
+      });
+    }
+  });
+
+  readings.slice(0, 20).forEach((reading) => {
+    if (reading.site_type === 'CHLORINATION') {
+      addOperationRangeAlert(alerts, reading, 'ph', 'pH', 6.5, 8.5);
+      addOperationRangeAlert(alerts, reading, 'rc_ppm', 'Residual chlorine', 0.2, 2, 'ppm');
+      addOperationRangeAlert(alerts, reading, 'turbidity_ntu', 'Turbidity', 0, 5, 'NTU');
+      addOperationRangeAlert(alerts, reading, 'pressure_psi', 'Pressure', 15, 100, 'psi');
+    }
+
+    if (reading.site_type === 'DEEPWELL') {
+      addOperationRangeAlert(alerts, reading, 'tds_ppm', 'TDS', 0, 500, 'ppm');
+      addOperationRangeAlert(alerts, reading, 'upstream_pressure_psi', 'Upstream pressure', 15, 120, 'psi');
+      addOperationRangeAlert(alerts, reading, 'downstream_pressure_psi', 'Downstream pressure', 15, 120, 'psi');
+    }
+  });
+
+  if (dashboard?.pendingApprovals?.length) {
+    alerts.push({
+      key: 'pending-approvals',
+      severity: 'info',
+      title: 'Operator approvals waiting',
+      detail: `${dashboard.pendingApprovals.length} operator account(s) need admin review.`,
+    });
+  }
+
+  return alerts.slice(0, 8);
+}
+
+function getNotificationTimestamp(item) {
+  return new Date(item?.timestamp || item?.created_at || 0).getTime() || 0;
+}
+
+function sortNotifications(items) {
+  return [...items].sort((a, b) => getNotificationTimestamp(b) - getNotificationTimestamp(a));
+}
+
+function createNotification({ key, type = 'activity', tone = 'info', iconName = 'information-circle-outline', title, description, timestamp, badge }) {
+  return {
+    key,
+    type,
+    tone,
+    iconName,
+    title,
+    description,
+    timestamp: timestamp || new Date().toISOString(),
+    badge: badge || (tone === 'success' ? 'Success' : tone === 'warning' ? 'Warning' : tone === 'critical' ? 'Critical' : 'Info'),
+  };
+}
+
+function buildMonitoringNotifications({ dashboard, operationAlerts, lastUpdatedAt, profile, connectionTone }) {
+  const notifications = [];
+  const recentReadings = dashboard?.recentReadings ?? [];
+
+  if (profile?.email) {
+    notifications.push(createNotification({
+      key: `login-${profile.id || profile.email}`,
+      type: 'activity',
+      tone: 'success',
+      iconName: 'log-in-outline',
+      title: 'Successful login',
+      description: `${profile.full_name || profile.email} is signed in to the live Supabase workspace.`,
+      timestamp: lastUpdatedAt || new Date().toISOString(),
+      badge: 'Success',
+    }));
+  }
+
+  if (lastUpdatedAt) {
+    notifications.push(createNotification({
+      key: `sync-success-${new Date(lastUpdatedAt).getTime()}`,
+      type: 'sync',
+      tone: 'info',
+      iconName: 'sync-circle-outline',
+      title: 'Sync successful',
+      description: 'Dashboard data is synced with Supabase.',
+      timestamp: lastUpdatedAt,
+      badge: 'Sync',
+    }));
+  }
+
+  if (connectionTone === 'error') {
+    notifications.push(createNotification({
+      key: `sync-failed-${Date.now()}`,
+      type: 'sync',
+      tone: 'critical',
+      iconName: 'cloud-offline-outline',
+      title: 'Sync failed',
+      description: 'The dashboard could not refresh from Supabase.',
+      timestamp: new Date().toISOString(),
+      badge: 'Critical',
+    }));
+  }
+
+  recentReadings.slice(0, 8).forEach((reading) => {
+    const siteName = getReadingSiteName(reading);
+    const submittedBy = reading?.submitted_profile?.full_name || reading?.submitted_profile?.email || 'Operator';
+
+    notifications.push(createNotification({
+      key: `reading-uploaded-${reading.site_type || 'site'}-${reading.id}`,
+      type: 'activity',
+      tone: 'success',
+      iconName: 'cloud-upload-outline',
+      title: 'Reading uploaded',
+      description: `${submittedBy} uploaded a ${String(reading.site_type || 'site').toLowerCase()} reading for ${siteName}.`,
+      timestamp: reading.created_at || reading.reading_datetime,
+      badge: 'Success',
+    }));
+
+    if (reading.site_type === 'CHLORINATION') {
+      const ph = Number(reading.ph);
+      const rc = Number(reading.rc_ppm);
+
+      if (Number.isFinite(ph) && (ph < 6.5 || ph > 8.5)) {
+        notifications.push(createNotification({
+          key: `ph-alert-${reading.id}`,
+          type: 'alert',
+          tone: ph > 8.5 ? 'critical' : 'warning',
+          iconName: 'warning-outline',
+          title: 'pH outside target',
+          description: `${siteName} reported pH ${ph}. Target range is 6.5-8.5.`,
+          timestamp: reading.created_at || reading.reading_datetime,
+          badge: ph > 8.5 ? 'Critical' : 'Warning',
+        }));
+      }
+
+      if (Number.isFinite(rc) && (rc < 0.2 || rc > 2)) {
+        notifications.push(createNotification({
+          key: `rc-alert-${reading.id}`,
+          type: 'alert',
+          tone: rc > 2 ? 'critical' : 'warning',
+          iconName: 'flask-outline',
+          title: 'Residual chlorine outside target',
+          description: `${siteName} reported ${rc} ppm residual chlorine. Target range is 0.2-2 ppm.`,
+          timestamp: reading.created_at || reading.reading_datetime,
+          badge: rc > 2 ? 'Critical' : 'Warning',
+        }));
+      }
+    }
+  });
+
+  operationAlerts.forEach((alert) => {
+    notifications.push(createNotification({
+      key: `operation-${alert.key}`,
+      type: 'alert',
+      tone: alert.severity === 'critical' ? 'critical' : alert.severity === 'warning' ? 'warning' : 'info',
+      iconName: alert.severity === 'critical' ? 'alert-circle-outline' : 'warning-outline',
+      title: alert.title,
+      description: alert.detail,
+      timestamp: lastUpdatedAt || new Date().toISOString(),
+      badge: alert.severity,
+    }));
+  });
+
+  if (operationAlerts.some((alert) => alert.key === 'stale-readings')) {
+    notifications.push(createNotification({
+      key: 'device-disconnected',
+      type: 'alert',
+      tone: 'critical',
+      iconName: 'wifi-outline',
+      title: 'Device disconnected',
+      description: 'No recent readings have been received from the monitoring network.',
+      timestamp: lastUpdatedAt || new Date().toISOString(),
+      badge: 'Critical',
+    }));
+  } else if (recentReadings.length) {
+    notifications.push(createNotification({
+      key: 'device-reconnected',
+      type: 'sync',
+      tone: 'success',
+      iconName: 'wifi-outline',
+      title: 'Device reconnected',
+      description: 'Live readings are being received from Supabase.',
+      timestamp: recentReadings[0]?.created_at || lastUpdatedAt || new Date().toISOString(),
+      badge: 'Success',
+    }));
+  }
+
+  return sortNotifications(Array.from(new Map(notifications.map((item) => [item.key, item])).values())).slice(0, 40);
+}
+
 function filterTimelineByShift(timeline, shiftFilter, now = new Date()) {
   if (shiftFilter === 'all') {
     return timeline;
@@ -357,12 +635,178 @@ function NavChip({ label, active, onPress, iconName, activeIconColor, iconColor 
   );
 }
 
-function QuickAction({ icon, label, onPress }) {
+function OperationAlertsPanel({ alerts, palette }) {
+  const hasAlerts = alerts.length > 0;
+  const [expandedAlerts, setExpandedAlerts] = useState({});
+  const severityMeta = {
+    critical: { iconName: 'alert-circle', style: styles.operationAlertCritical },
+    warning: { iconName: 'warning', style: styles.operationAlertWarning },
+    info: { iconName: 'information-circle', style: styles.operationAlertInfo },
+  };
+
   return (
-    <Pressable onPress={onPress} style={({ pressed }) => [styles.quickAction, pressed && styles.quickActionPressed]}>
-      {icon}
-      <Text style={styles.quickActionLabel}>{label}</Text>
-    </Pressable>
+    <Card style={[styles.operationAlertsPanel, hasAlerts && styles.operationAlertsPanelActive]}>
+      <SectionHeader
+        title="Operations alerts"
+        body={hasAlerts ? `${alerts.length} item(s) need attention` : 'No active operating alerts from recent readings.'}
+        iconName={hasAlerts ? 'warning-outline' : 'shield-checkmark-outline'}
+        iconColor={hasAlerts ? palette.amber500 : palette.teal600}
+      />
+
+      {hasAlerts ? (
+        <ScrollView style={[styles.operationAlertScroll, alerts.length >= 3 && styles.operationAlertScrollPeek]} nestedScrollEnabled>
+          <View style={styles.operationAlertStack}>
+            {alerts.map((alert) => {
+              const meta = severityMeta[alert.severity] || severityMeta.info;
+              const isExpanded = Boolean(expandedAlerts[alert.key]);
+
+              return (
+                <Pressable
+                  key={alert.key}
+                  onPress={() => setExpandedAlerts((current) => ({ ...current, [alert.key]: !current[alert.key] }))}
+                  style={({ pressed }) => [
+                    styles.operationAlertCard,
+                    meta.style,
+                    pressed && styles.operationAlertCardPressed,
+                  ]}
+                >
+                  <View style={styles.operationAlertCardHead}>
+                    <View style={styles.operationAlertTitleRow}>
+                      <Ionicons name={meta.iconName} size={14} color="#FFFFFF" />
+                      <Text style={styles.operationAlertTitle} numberOfLines={1}>{alert.title}</Text>
+                    </View>
+                    <View style={styles.operationAlertMetaRow}>
+                    <View style={styles.operationAlertSeverityPill}>
+                      <Text style={styles.operationAlertSeverityText}>{alert.severity}</Text>
+                    </View>
+                    <Ionicons name={isExpanded ? 'chevron-up' : 'chevron-down'} size={13} color={palette.ink900} />
+                    </View>
+                  </View>
+                  {isExpanded ? <Text style={styles.operationAlertDetail}>{alert.detail}</Text> : null}
+                </Pressable>
+              );
+            })}
+          </View>
+        </ScrollView>
+      ) : (
+        <MessageBanner tone="success">No active operating alerts.</MessageBanner>
+      )}
+    </Card>
+  );
+}
+
+const NOTIFICATION_FILTERS = [
+  { key: 'all', label: 'All' },
+  { key: 'alerts', label: 'Alerts' },
+  { key: 'sync', label: 'Sync' },
+  { key: 'activity', label: 'Activity' },
+];
+
+function NotificationCenter({
+  notifications,
+  unreadCount,
+  readMap,
+  filter,
+  onChangeFilter,
+  onMarkAllRead,
+  palette,
+}) {
+  return (
+    <View style={styles.notificationCenter}>
+      <View style={styles.notificationHero}>
+        <View style={styles.notificationHeroIcon}>
+          <Ionicons name="notifications-outline" size={18} color={palette.cyan300} />
+        </View>
+        <View style={styles.notificationHeroCopy}>
+          <Text style={styles.notificationHeroTitle}>Realtime notifications</Text>
+          <Text style={styles.notificationHeroBody}>Supabase monitoring events, alerts, uploads, and sync activity.</Text>
+        </View>
+        <Pressable onPress={onMarkAllRead} style={({ pressed }) => [styles.markReadButton, pressed && styles.quickActionPressed]}>
+          <Text style={styles.markReadText}>Mark all as read</Text>
+        </Pressable>
+      </View>
+
+      <View style={styles.notificationFilterRow}>
+        {NOTIFICATION_FILTERS.map((item) => {
+          const active = filter === item.key;
+
+          return (
+            <Pressable
+              key={item.key}
+              onPress={() => onChangeFilter(item.key)}
+              style={({ pressed }) => [
+                styles.notificationFilterTab,
+                active && styles.notificationFilterTabActive,
+                pressed && styles.quickActionPressed,
+              ]}
+            >
+              <Text style={[styles.notificationFilterText, active && styles.notificationFilterTextActive]}>
+                {item.label}
+              </Text>
+            </Pressable>
+          );
+        })}
+      </View>
+
+      <View style={styles.notificationMetaRow}>
+        <Text style={styles.notificationMetaText}>{notifications.length} visible</Text>
+        <Text style={styles.notificationMetaText}>{unreadCount} unread</Text>
+      </View>
+
+      <View style={styles.notificationStack}>
+        {notifications.length ? (
+          notifications.map((item) => (
+            <NotificationCard
+              key={item.key}
+              item={item}
+              unread={!readMap[item.key]}
+            />
+          ))
+        ) : (
+          <MessageBanner tone="info">No notifications match this filter right now.</MessageBanner>
+        )}
+      </View>
+    </View>
+  );
+}
+
+function NotificationCard({ item, unread }) {
+  const toneStyle = {
+    success: styles.notificationCardSuccess,
+    warning: styles.notificationCardWarning,
+    critical: styles.notificationCardCritical,
+    info: styles.notificationCardInfo,
+  }[item.tone] || styles.notificationCardInfo;
+  const iconStyle = {
+    success: styles.notificationIconSuccess,
+    warning: styles.notificationIconWarning,
+    critical: styles.notificationIconCritical,
+    info: styles.notificationIconInfo,
+  }[item.tone] || styles.notificationIconInfo;
+  const badgeStyle = {
+    success: styles.notificationBadgeSuccess,
+    warning: styles.notificationBadgeWarning,
+    critical: styles.notificationBadgeCritical,
+    info: styles.notificationBadgeInfo,
+  }[item.tone] || styles.notificationBadgeInfo;
+
+  return (
+    <View style={[styles.notificationCard, toneStyle]}>
+      {unread ? <View style={styles.notificationUnreadDot} /> : null}
+      <View style={[styles.notificationIcon, iconStyle]}>
+        <Ionicons name={item.iconName} size={17} color="#FFFFFF" />
+      </View>
+      <View style={styles.notificationCardCopy}>
+        <View style={styles.notificationCardTopRow}>
+          <Text numberOfLines={1} style={styles.notificationTitle}>{item.title}</Text>
+          <View style={[styles.notificationBadge, badgeStyle]}>
+            <Text style={styles.notificationBadgeText}>{item.badge}</Text>
+          </View>
+        </View>
+        <Text style={styles.notificationDescription}>{item.description}</Text>
+        <Text style={styles.notificationTimestamp}>{formatMaybeTimestamp(item.timestamp)}</Text>
+      </View>
+    </View>
   );
 }
 
@@ -400,8 +844,8 @@ function EntityCard({ children, style, accentStyle }) {
   );
 }
 
-export default function OfficeDashboardScreen({ navigation }) {
-  const { profile, signOut } = useAuth();
+export default function OfficeDashboardScreen({ navigation, initialSection }) {
+  const { profile } = useAuth();
   const { palette, isDark } = useTheme();
   const { width } = useWindowDimensions();
   const responsiveMetrics = useMemo(() => getResponsiveMetrics(width), [width]);
@@ -450,9 +894,19 @@ export default function OfficeDashboardScreen({ navigation }) {
   const [showApprovalAnimation, setShowApprovalAnimation] = useState(false);
   const [message, setMessage] = useState('');
   const [tone, setTone] = useState('info');
+  const [lastUpdatedAt, setLastUpdatedAt] = useState(null);
   const [currentTime, setCurrentTime] = useState(() => new Date());
   const [shiftFilter, setShiftFilter] = useState('current');
   const [selectedCheckpoint, setSelectedCheckpoint] = useState(null);
+  const [notificationFilter, setNotificationFilter] = useState('all');
+  const [readNotificationKeys, setReadNotificationKeys] = useState({});
+  const [liveNotifications, setLiveNotifications] = useState([]);
+
+  useEffect(() => {
+    if (initialSection) {
+      setActiveSection(initialSection);
+    }
+  }, [initialSection]);
 
   const sections = useMemo(() => {
     if (!isAdmin) {
@@ -473,10 +927,17 @@ export default function OfficeDashboardScreen({ navigation }) {
   }, [isAdmin]);
 
   useEffect(() => {
-    if (!isAdmin && activeSection !== 'readings') {
+    if (!isAdmin && activeSection !== 'readings' && activeSection !== 'notifications') {
       setActiveSection('readings');
     }
   }, [activeSection, isAdmin]);
+
+  function pushLiveNotification(notification) {
+    setLiveNotifications((current) => sortNotifications([
+      createNotification(notification),
+      ...current,
+    ]).slice(0, 30));
+  }
 
   async function loadDashboard({ silent = false, successMessage = '' } = {}) {
     if (!silent) {
@@ -486,20 +947,47 @@ export default function OfficeDashboardScreen({ navigation }) {
     try {
       const nextDashboard = await getOfficeDashboardSnapshot();
       setDashboard(nextDashboard);
+      setLastUpdatedAt(new Date());
 
       if (successMessage) {
         setTone('success');
         setMessage(successMessage);
-      } else if (!nextDashboard.pendingApprovals.length) {
-        setTone('success');
-        setMessage('All operator registrations are approved right now.');
-      } else {
+        pushLiveNotification({
+          key: `activity-${Date.now()}`,
+          type: 'activity',
+          tone: 'success',
+          iconName: 'checkmark-circle-outline',
+          title: 'Activity successful',
+          description: successMessage,
+          badge: 'Success',
+        });
+      } else if (nextDashboard.pendingApprovals.length) {
         setTone('info');
         setMessage('Office dashboard is synced with the live database.');
+      } else {
+        setMessage('');
       }
+      pushLiveNotification({
+        key: `sync-success-live-${Date.now()}`,
+        type: 'sync',
+        tone: 'info',
+        iconName: 'sync-circle-outline',
+        title: 'Sync successful',
+        description: 'Dashboard snapshot refreshed from Supabase.',
+        badge: 'Sync',
+      });
     } catch (error) {
       setTone('error');
       setMessage(error.message || 'Failed to load office dashboard.');
+      pushLiveNotification({
+        key: `sync-failed-live-${Date.now()}`,
+        type: 'sync',
+        tone: 'critical',
+        iconName: 'cloud-offline-outline',
+        title: 'Sync failed',
+        description: error.message || 'Failed to load office dashboard.',
+        badge: 'Critical',
+      });
     } finally {
       if (!silent) {
         setLoading(false);
@@ -560,7 +1048,19 @@ export default function OfficeDashboardScreen({ navigation }) {
       return undefined;
     }
 
-    const refreshSlotTimeline = () => {
+    const refreshSlotTimeline = (payload) => {
+      const tableLabel = payload?.table === 'deepwell_readings' ? 'deepwell' : 'chlorination';
+      const row = payload?.new || payload?.old || {};
+      pushLiveNotification({
+        key: `realtime-${payload?.table || 'reading'}-${row.id || Date.now()}-${Date.now()}`,
+        type: 'activity',
+        tone: 'success',
+        iconName: payload?.eventType === 'DELETE' ? 'trash-outline' : 'cloud-upload-outline',
+        title: payload?.eventType === 'DELETE' ? 'Reading removed' : 'Reading uploaded',
+        description: `Realtime ${tableLabel} reading activity synced from Supabase.`,
+        timestamp: row.created_at || new Date().toISOString(),
+        badge: 'Realtime',
+      });
       loadDashboard({ silent: true });
     };
 
@@ -703,34 +1203,62 @@ export default function OfficeDashboardScreen({ navigation }) {
   const slotSummary = useMemo(() => summarizeTimelineSlots(slotTimeline), [slotTimeline]);
   const expectedSlotSummary = useMemo(() => summarizeTimelineSlots(expectedSlotTimeline), [expectedSlotTimeline]);
   const upcomingSlotCount = Math.max(expectedSlotSummary.upcoming - slotSummary.upcoming, 0);
+  const operationAlerts = useMemo(() => buildOperationAlerts(dashboard, currentTime), [dashboard, currentTime]);
+  const notificationItems = useMemo(
+    () => sortNotifications([
+      ...liveNotifications,
+      ...buildMonitoringNotifications({
+        dashboard,
+        operationAlerts,
+        lastUpdatedAt,
+        profile,
+        connectionTone: tone,
+      }),
+    ]).filter((item, index, all) => all.findIndex((candidate) => candidate.key === item.key) === index),
+    [dashboard, lastUpdatedAt, liveNotifications, operationAlerts, profile, tone]
+  );
+  const filteredNotifications = useMemo(
+    () =>
+      notificationItems.filter((item) => {
+        if (notificationFilter === 'all') {
+          return true;
+        }
+        if (notificationFilter === 'alerts') {
+          return item.type === 'alert';
+        }
+        if (notificationFilter === 'sync') {
+          return item.type === 'sync';
+        }
+        return item.type === 'activity';
+      }),
+    [notificationFilter, notificationItems]
+  );
+  const unreadNotificationCount = filteredNotifications.filter((item) => !readNotificationKeys[item.key]).length;
 
   const canViewGraphs = profile?.role === 'manager' || profile?.role === 'supervisor';
-  const quickActions = [
+  const headerStatusChips = [
     {
-      key: 'refresh',
-      icon: <Ionicons name="refresh" size={15} color={palette.teal600} />,
-      label: 'Refresh',
-      onPress: () => loadDashboard(),
-      accent: 'teal',
+      key: 'connected',
+      label: tone === 'error' ? 'Connection issue' : 'Connected',
+      tone: tone === 'error' ? 'warning' : 'success',
+      iconName: tone === 'error' ? 'alert-circle-outline' : 'checkmark-circle-outline',
+      iconColor: tone === 'error' ? palette.amber500 : palette.successText,
     },
-    canViewGraphs
-      ? {
-          key: 'graphs',
-          icon: <Ionicons name="bar-chart-outline" size={15} color={palette.teal600} />,
-          label: 'Dashboard Graphs',
-          onPress: () => navigation.navigate('office-graphs'),
-          accent: 'teal',
-        }
-      : null,
     {
-      key: 'history',
-      icon: <Ionicons name="reader-outline" size={15} color={isDark ? palette.ink900 : palette.navy700} />,
-      label: 'Reading History',
-      onPress: () => navigation.navigate('reading-history', { source: 'office-dashboard' }),
-      accent: 'navy',
+      key: 'alerts',
+      label: `${dashboard.pendingApprovals.length} alerts`,
+      tone: dashboard.pendingApprovals.length ? 'warning' : 'neutral',
+      iconName: dashboard.pendingApprovals.length ? 'warning-outline' : 'notifications-outline',
+      iconColor: dashboard.pendingApprovals.length ? palette.amber500 : palette.ink500,
     },
-  ].filter(Boolean);
-
+    {
+      key: 'updated',
+      label: `Updated ${formatHeaderUpdatedTime(lastUpdatedAt)}`,
+      tone: 'neutral',
+      iconName: 'ellipse',
+      iconColor: palette.teal500,
+    },
+  ];
   function renderOverview() {
     if (!isAdmin) {
       return renderSlotTimeline();
@@ -1029,6 +1557,26 @@ export default function OfficeDashboardScreen({ navigation }) {
             <MessageBanner tone="info">No active sites match this checkpoint filter right now.</MessageBanner>
           )}
         </Card>
+      </View>
+    );
+  }
+
+  function renderNotifications() {
+    return (
+      <View style={styles.sectionStack}>
+        <NotificationCenter
+          notifications={filteredNotifications}
+          unreadCount={unreadNotificationCount}
+          readMap={readNotificationKeys}
+          filter={notificationFilter}
+          onChangeFilter={setNotificationFilter}
+          onMarkAllRead={() => {
+            setReadNotificationKeys(
+              Object.fromEntries(notificationItems.map((item) => [item.key, true]))
+            );
+          }}
+          palette={palette}
+        />
       </View>
     );
   }
@@ -1379,6 +1927,10 @@ export default function OfficeDashboardScreen({ navigation }) {
   }
 
   function renderSection() {
+    if (activeSection === 'notifications') {
+      return renderNotifications();
+    }
+
     if (activeSection === 'approvals') {
       return renderApprovals();
     }
@@ -1396,13 +1948,12 @@ export default function OfficeDashboardScreen({ navigation }) {
 
   return (
     <ScreenShell
-      eyebrow="NemeXus Monitoring"
-      title="Office control center"
-      subtitle={
-        isAdmin
-          ? 'Admins can approve registrations, review readings, and manage office roles from here.'
-          : 'This office account can review readings only.'
-      }
+      eyebrow="Live Supabase Workspace"
+      title={activeSection === 'notifications' ? 'Notification' : 'Dashboard'}
+      showMenuButton
+      statusChips={headerStatusChips}
+      refreshing={loading}
+      onRefresh={() => loadDashboard()}
     >
       {renderRecordedValuesModal()}
 
@@ -1427,42 +1978,6 @@ export default function OfficeDashboardScreen({ navigation }) {
           </View>
         </View>
       </Modal>
-
-      <Card style={styles.profileCard}>
-        <View style={styles.profileTopRow}>
-          <View style={styles.profileCopy}>
-            <Text style={styles.sectionEyebrow}>Office account</Text>
-            <Text style={styles.userName}>{profile?.full_name || profile?.email || 'Office user'}</Text>
-            <Text style={styles.userMeta}>{profile?.email || '-'}</Text>
-          </View>
-          <View style={styles.profileActions}>
-            <RoleBadge role={profile?.role} />
-            <Pressable onPress={signOut} style={({ pressed }) => [styles.signOutMini, pressed && styles.signOutMiniPressed]}>
-              <Ionicons name="log-out-outline" size={14} color={palette.amber500} />
-              <Text style={styles.signOutMiniLabel}>Sign out</Text>
-            </Pressable>
-          </View>
-        </View>
-      </Card>
-
-      <Card style={styles.quickActionsCard}>
-        <View style={styles.quickActionsTopRow}>
-          <View style={styles.quickActionsHeader}>
-            <Text style={styles.sectionEyebrow}>Quick Access Tools</Text>
-          </View>
-          <View style={styles.quickActionsRow}>
-            {quickActions.map((action) => (
-              <QuickAction
-                key={action.key}
-                icon={action.icon}
-                label={action.label}
-                onPress={action.onPress}
-                accent={action.accent}
-              />
-            ))}
-          </View>
-        </View>
-      </Card>
 
       {isAdmin ? (
         <Card style={styles.navigationCard}>
@@ -1489,9 +2004,7 @@ export default function OfficeDashboardScreen({ navigation }) {
       {message ? <MessageBanner tone={tone}>{message}</MessageBanner> : null}
 
       {loading ? (
-        <View style={styles.loadingWrap}>
-          <ActivityIndicator size="large" color={palette.teal600} />
-        </View>
+        <LoadingState label="Loading dashboard data" />
       ) : (
         renderSection()
       )}
@@ -1666,55 +2179,8 @@ function createStyles(palette, isDark, responsiveMetrics) {
   profileCard: {
     paddingVertical: 10,
   },
-  quickActionsCard: {
-    paddingVertical: 10,
-    paddingHorizontal: 10,
-  },
-  quickActionsTopRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    flexWrap: 'wrap',
-    gap: 10,
-  },
-  quickActionsHeader: {
-    gap: 1,
-    flexGrow: 1,
-    flexShrink: 0,
-  },
-  quickActionsRow: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 6,
-    justifyContent: 'flex-end',
-    flexGrow: 1,
-    flexShrink: 1,
-  },
-  quickAction: {
-    minWidth: 118,
-    flexGrow: 1,
-    flexShrink: 1,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 5,
-    borderRadius: 999,
-    borderWidth: 1,
-    borderColor: palette.line,
-    backgroundColor: isDark ? palette.mist : '#F7FBFF',
-    paddingVertical: 7,
-    paddingHorizontal: 10,
-  },
   quickActionPressed: {
     transform: [{ scale: 0.98 }],
-  },
-  quickActionLabel: {
-    color: palette.ink900,
-    flexShrink: 1,
-    fontSize: 10,
-    lineHeight: 12,
-    fontWeight: '800',
-    textAlign: 'center',
   },
   navigationCard: {
     gap: 8,
@@ -1775,11 +2241,6 @@ function createStyles(palette, isDark, responsiveMetrics) {
     fontWeight: '800',
     letterSpacing: 0.5,
     textTransform: 'uppercase',
-  },
-  loadingWrap: {
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingVertical: 40,
   },
   sectionHeader: {
     gap: 3,
@@ -2379,6 +2840,307 @@ function createStyles(palette, isDark, responsiveMetrics) {
   },
   recentReadingDateChipTextActive: {
     color: palette.onAccent,
+  },
+  operationAlertsPanel: {
+    gap: 10,
+    borderColor: isDark ? '#294C68' : '#BFD4E7',
+    backgroundColor: isDark ? '#0C1824' : '#F8FCFF',
+  },
+  operationAlertsPanelActive: {
+    borderColor: isDark ? '#7C5C1D' : '#F2C96D',
+  },
+  operationAlertScroll: {
+    maxHeight: 190,
+  },
+  operationAlertScrollPeek: {
+    maxHeight: 230,
+  },
+  operationAlertStack: {
+    gap: 8,
+  },
+  operationAlertCard: {
+    minHeight: 54,
+    borderWidth: 1,
+    paddingHorizontal: 10,
+    paddingVertical: 9,
+    borderRadius: 8,
+    gap: 6,
+  },
+  operationAlertCardPressed: {
+    transform: [{ scale: 0.995 }],
+  },
+  operationAlertCritical: {
+    borderColor: isDark ? '#A84257' : '#F6A6B4',
+    backgroundColor: isDark ? '#35121C' : '#FFF0F3',
+  },
+  operationAlertWarning: {
+    borderColor: isDark ? '#A77925' : '#F7D6A7',
+    backgroundColor: isDark ? '#3A2910' : '#FFF8E7',
+  },
+  operationAlertInfo: {
+    borderColor: isDark ? '#1D8C91' : '#B5E5E3',
+    backgroundColor: isDark ? '#0F2B35' : '#F0FBFA',
+  },
+  operationAlertCardHead: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 8,
+  },
+  operationAlertTitleRow: {
+    flex: 1,
+    minWidth: 0,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  operationAlertTitle: {
+    flex: 1,
+    minWidth: 0,
+    color: palette.ink900,
+    fontSize: 12,
+    fontWeight: '900',
+  },
+  operationAlertMetaRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  operationAlertSeverityPill: {
+    borderWidth: 1,
+    borderColor: isDark ? 'rgba(255,255,255,0.22)' : 'rgba(17,35,59,0.14)',
+    backgroundColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(255,255,255,0.7)',
+    paddingHorizontal: 7,
+    paddingVertical: 3,
+    borderRadius: 999,
+  },
+  operationAlertSeverityText: {
+    color: palette.ink900,
+    fontSize: 8,
+    fontWeight: '900',
+    textTransform: 'uppercase',
+  },
+  operationAlertDetail: {
+    color: palette.ink700,
+    fontSize: 10,
+    lineHeight: 15,
+    fontWeight: '700',
+  },
+  notificationCenter: {
+    gap: 12,
+  },
+  notificationHero: {
+    flexDirection: responsiveMetrics.isTablet ? 'row' : 'column',
+    alignItems: responsiveMetrics.isTablet ? 'center' : 'stretch',
+    gap: 10,
+    borderWidth: 1,
+    borderColor: isDark ? 'rgba(103,232,249,0.24)' : '#BFD4E7',
+    backgroundColor: isDark ? '#07131F' : '#F8FCFF',
+    padding: 12,
+    borderRadius: 16,
+    shadowColor: isDark ? '#38D7C2' : '#0D9488',
+    shadowOpacity: isDark ? 0.18 : 0.08,
+    shadowRadius: 18,
+    shadowOffset: { width: 0, height: 0 },
+    elevation: 4,
+  },
+  notificationHeroIcon: {
+    width: 42,
+    height: 42,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: isDark ? '#1D8C91' : '#8ADCD6',
+    backgroundColor: isDark ? '#0D3A4A' : '#E5F8F6',
+  },
+  notificationHeroCopy: {
+    flex: 1,
+    minWidth: 0,
+  },
+  notificationHeroTitle: {
+    color: palette.ink900,
+    fontSize: 16,
+    fontWeight: '900',
+  },
+  notificationHeroBody: {
+    marginTop: 3,
+    color: palette.ink500,
+    fontSize: 11,
+    lineHeight: 16,
+    fontWeight: '700',
+  },
+  markReadButton: {
+    minHeight: 34,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
+    borderColor: isDark ? '#1D8C91' : '#8ADCD6',
+    backgroundColor: isDark ? '#0F3A35' : '#E5F8F6',
+    paddingHorizontal: 10,
+    borderRadius: 10,
+    alignSelf: responsiveMetrics.isTablet ? 'auto' : 'stretch',
+  },
+  markReadText: {
+    color: palette.ink900,
+    fontSize: 10,
+    fontWeight: '900',
+  },
+  notificationFilterRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 6,
+  },
+  notificationFilterTab: {
+    minHeight: 34,
+    flex: 1,
+    minWidth: 68,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
+    borderColor: isDark ? '#294C68' : '#BFD4E7',
+    backgroundColor: isDark ? '#0C1824' : '#F8FCFF',
+    borderRadius: 999,
+    paddingHorizontal: 10,
+  },
+  notificationFilterTabActive: {
+    borderColor: palette.cyan300,
+    backgroundColor: palette.navy700,
+  },
+  notificationFilterText: {
+    color: palette.ink500,
+    fontSize: 10,
+    fontWeight: '900',
+  },
+  notificationFilterTextActive: {
+    color: palette.onAccent,
+  },
+  notificationMetaRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 2,
+  },
+  notificationMetaText: {
+    color: palette.ink500,
+    fontSize: 10,
+    fontWeight: '800',
+    textTransform: 'uppercase',
+  },
+  notificationStack: {
+    gap: 9,
+  },
+  notificationCard: {
+    position: 'relative',
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 10,
+    borderWidth: 1,
+    padding: 12,
+    borderRadius: 16,
+    backgroundColor: isDark ? '#081624' : '#FFFFFF',
+    shadowOpacity: isDark ? 0.18 : 0.08,
+    shadowRadius: 14,
+    shadowOffset: { width: 0, height: 0 },
+    elevation: 3,
+  },
+  notificationCardSuccess: {
+    borderColor: isDark ? '#167C65' : '#9EDFD1',
+    shadowColor: '#1CC7B4',
+  },
+  notificationCardWarning: {
+    borderColor: isDark ? '#8A6514' : '#F3C66B',
+    shadowColor: '#F6C25B',
+  },
+  notificationCardCritical: {
+    borderColor: isDark ? '#803145' : '#F2A5B6',
+    shadowColor: '#FB7185',
+  },
+  notificationCardInfo: {
+    borderColor: isDark ? '#1E5B70' : '#B8DDF0',
+    shadowColor: '#67E8F9',
+  },
+  notificationUnreadDot: {
+    position: 'absolute',
+    top: 10,
+    right: 10,
+    width: 8,
+    height: 8,
+    borderRadius: 999,
+    backgroundColor: palette.cyan300,
+  },
+  notificationIcon: {
+    width: 36,
+    height: 36,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: 12,
+  },
+  notificationIconSuccess: {
+    backgroundColor: '#0F766E',
+  },
+  notificationIconWarning: {
+    backgroundColor: '#B45309',
+  },
+  notificationIconCritical: {
+    backgroundColor: '#BE123C',
+  },
+  notificationIconInfo: {
+    backgroundColor: palette.navy700,
+  },
+  notificationCardCopy: {
+    flex: 1,
+    minWidth: 0,
+    gap: 5,
+  },
+  notificationCardTopRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    paddingRight: 12,
+    minWidth: 0,
+  },
+  notificationTitle: {
+    flex: 1,
+    minWidth: 0,
+    color: palette.ink900,
+    fontSize: 13,
+    fontWeight: '900',
+  },
+  notificationDescription: {
+    color: palette.ink700,
+    fontSize: 11,
+    lineHeight: 16,
+    fontWeight: '700',
+  },
+  notificationTimestamp: {
+    color: palette.ink500,
+    fontSize: 10,
+    fontWeight: '800',
+  },
+  notificationBadge: {
+    flexShrink: 0,
+    borderRadius: 999,
+    paddingHorizontal: 7,
+    paddingVertical: 3,
+  },
+  notificationBadgeSuccess: {
+    backgroundColor: isDark ? '#073C35' : '#E8FFF8',
+  },
+  notificationBadgeWarning: {
+    backgroundColor: isDark ? '#33240B' : '#FFF8E7',
+  },
+  notificationBadgeCritical: {
+    backgroundColor: isDark ? '#35121C' : '#FFF0F3',
+  },
+  notificationBadgeInfo: {
+    backgroundColor: isDark ? '#10243A' : '#EAF6FF',
+  },
+  notificationBadgeText: {
+    color: palette.ink900,
+    fontSize: 8,
+    fontWeight: '900',
+    textTransform: 'uppercase',
   },
   timelineSummaryGrid: {
     flexDirection: 'row',
