@@ -77,10 +77,10 @@ export const themes = {
     shadows: {
       card: {
         shadowColor: '#000000',
-        shadowOpacity: 0.16,
-        shadowRadius: 18,
-        shadowOffset: { width: 0, height: 12 },
-        elevation: 4,
+        shadowOpacity: 0.1,
+        shadowRadius: 12,
+        shadowOffset: { width: 0, height: 8 },
+        elevation: 2,
       },
     },
     statusBar: 'light',

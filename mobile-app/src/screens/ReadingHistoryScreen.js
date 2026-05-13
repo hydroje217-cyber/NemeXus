@@ -1,6 +1,5 @@
 import { useContext, useEffect, useMemo, useRef, useState } from 'react';
 import {
-  ActivityIndicator,
   Platform,
   ScrollView,
   TextInput,
@@ -18,6 +17,7 @@ import Card from '../components/Card';
 import MessageBanner from '../components/MessageBanner';
 import PrimaryButton from '../components/PrimaryButton';
 import ScreenShell, { KeyboardScrollContext } from '../components/ScreenShell';
+import { EmptyState, LoadingState, SegmentChip, SplitExportButton } from '../components/UiControls';
 import { useAuth } from '../context/AuthContext';
 import { useTheme } from '../context/ThemeContext';
 import { listReadings } from '../services/readings';
@@ -106,7 +106,7 @@ function MobileDateField({ label, value, placeholder, onPress }) {
   return (
     <View style={styles.filterField}>
       <Text style={styles.filterLabel}>{label}</Text>
-      <Pressable onPress={onPress} style={styles.dateField}>
+      <Pressable onPress={onPress} style={[styles.dateField, styles.compactDateField]}>
         <View style={styles.inputRow}>
           <View style={styles.inputIconWrap}>
             <Ionicons name="calendar-outline" size={15} color={palette.ink500} />
@@ -114,7 +114,7 @@ function MobileDateField({ label, value, placeholder, onPress }) {
           <Text
             numberOfLines={1}
             ellipsizeMode="tail"
-            style={[styles.dateFieldValue, !value && styles.dateFieldPlaceholder]}
+            style={[styles.dateFieldValue, styles.compactDateFieldValue, !value && styles.dateFieldPlaceholder]}
           >
             {value || placeholder}
           </Text>
@@ -669,11 +669,11 @@ function DataTable({ columns, rows, emptyMessage }) {
   if (!rows.length) {
     return (
       <Card>
-        <View style={styles.emptyIconWrap}>
-          <Ionicons name="document-text-outline" size={18} color={palette.ink900} />
-        </View>
-        <Text style={styles.emptyTitle}>No readings found</Text>
-        <Text style={styles.emptyBody}>{emptyMessage}</Text>
+        <EmptyState
+          title="No readings found"
+          body={emptyMessage}
+          iconName="document-text-outline"
+        />
       </Card>
     );
   }
@@ -736,142 +736,18 @@ function DataTable({ columns, rows, emptyMessage }) {
 }
 
 function TableModeChip({ label, active, onPress, iconName }) {
-  const { palette, isDark } = useTheme();
   const { width } = useWindowDimensions();
   const responsiveMetrics = useMemo(() => getResponsiveMetrics(width), [width]);
-  const styles = useMemo(() => createStyles(palette, isDark, responsiveMetrics), [palette, isDark, responsiveMetrics]);
-  const iconColor = active ? palette.onAccent : palette.ink700;
 
   return (
-    <Pressable onPress={onPress} style={[styles.modeChip, active && styles.modeChipActive]}>
-      <Ionicons name={iconName} size={14} color={iconColor} />
-      <Text style={[styles.modeChipText, active && styles.modeChipTextActive]}>{label}</Text>
-    </Pressable>
-  );
-}
-
-function ExportFormatChip({ label, active, onPress, iconName }) {
-  const { palette, isDark } = useTheme();
-  const { width } = useWindowDimensions();
-  const responsiveMetrics = useMemo(() => getResponsiveMetrics(width), [width]);
-  const styles = useMemo(() => createStyles(palette, isDark, responsiveMetrics), [palette, isDark, responsiveMetrics]);
-  const iconColor = active ? palette.onAccent : palette.ink700;
-
-  return (
-    <Pressable onPress={onPress} style={[styles.modeChip, active && styles.modeChipActive]}>
-      <Ionicons name={iconName} size={14} color={iconColor} />
-      <Text style={[styles.modeChipText, active && styles.modeChipTextActive]}>{label}</Text>
-    </Pressable>
-  );
-}
-
-function ExportActionButton({ format, loading, onExport, onSelectFormat }) {
-  const { palette, isDark } = useTheme();
-  const { width } = useWindowDimensions();
-  const responsiveMetrics = useMemo(() => getResponsiveMetrics(width), [width]);
-  const styles = useMemo(() => createStyles(palette, isDark, responsiveMetrics), [palette, isDark, responsiveMetrics]);
-  const isExcel = format === 'xlsx';
-  const isPdf = format === 'pdf';
-  const [menuOpen, setMenuOpen] = useState(false);
-
-  function handleSelect(nextFormat) {
-    onSelectFormat(nextFormat);
-    setMenuOpen(false);
-  }
-
-  return (
-    <View style={styles.exportButtonShell}>
-      <View style={styles.exportButtonWrap}>
-        <Pressable
-          onPress={onExport}
-          style={({ pressed }) => [
-            styles.exportPrimaryButton,
-            pressed && styles.exportPrimaryButtonPressed,
-          ]}
-        >
-          <View style={styles.exportPrimaryContent}>
-            {loading ? (
-              <ActivityIndicator size="small" color={palette.ink900} />
-            ) : (
-              <Ionicons
-                name={isPdf ? 'document-attach-outline' : isExcel ? 'grid-outline' : 'document-text-outline'}
-                size={16}
-                color={palette.ink900}
-              />
-            )}
-            <Text style={styles.exportPrimaryText}>{loading ? 'Exporting...' : 'Export'}</Text>
-          </View>
-        </Pressable>
-
-        <Pressable
-          onPress={() => setMenuOpen((current) => !current)}
-          style={({ pressed }) => [
-            styles.exportFormatToggle,
-            pressed && styles.exportFormatTogglePressed,
-          ]}
-        >
-          <Text style={styles.exportFormatToggleText}>{isPdf ? '.pdf' : isExcel ? '.xlsx' : '.csv'}</Text>
-          <Ionicons name={menuOpen ? 'chevron-up' : 'chevron-down'} size={13} color={palette.ink900} />
-        </Pressable>
-      </View>
-
-      {menuOpen ? (
-        <View style={styles.exportDropdownMenu}>
-          <Pressable
-            onPress={() => handleSelect('csv')}
-            style={({ pressed }) => [
-              styles.exportDropdownItem,
-              format === 'csv' && styles.exportDropdownItemActive,
-              pressed && styles.exportDropdownItemPressed,
-            ]}
-          >
-            <Ionicons
-              name="document-text-outline"
-              size={14}
-              color={format === 'csv' ? palette.teal600 : palette.ink700}
-            />
-            <Text style={[styles.exportDropdownItemText, format === 'csv' && styles.exportDropdownItemTextActive]}>
-              .csv
-            </Text>
-          </Pressable>
-          <Pressable
-            onPress={() => handleSelect('xlsx')}
-            style={({ pressed }) => [
-              styles.exportDropdownItem,
-              format === 'xlsx' && styles.exportDropdownItemActive,
-              pressed && styles.exportDropdownItemPressed,
-            ]}
-          >
-            <Ionicons
-              name="grid-outline"
-              size={14}
-              color={format === 'xlsx' ? palette.teal600 : palette.ink700}
-            />
-            <Text style={[styles.exportDropdownItemText, format === 'xlsx' && styles.exportDropdownItemTextActive]}>
-              .xlsx
-            </Text>
-          </Pressable>
-          <Pressable
-            onPress={() => handleSelect('pdf')}
-            style={({ pressed }) => [
-              styles.exportDropdownItem,
-              styles.exportDropdownItemLast,
-              format === 'pdf' && styles.exportDropdownItemActive,
-              pressed && styles.exportDropdownItemPressed,
-            ]}
-          >
-            <Ionicons
-              name="document-attach-outline"
-              size={14}
-              color={format === 'pdf' ? palette.teal600 : palette.ink700}
-            />
-            <Text style={[styles.exportDropdownItemText, format === 'pdf' && styles.exportDropdownItemTextActive]}>
-              .pdf
-            </Text>
-          </Pressable>
-        </View>
-      ) : null}
-    </View>
+    <SegmentChip
+      label={label}
+      iconName={iconName}
+      active={active}
+      onPress={onPress}
+      size={responsiveMetrics.isTablet ? 'field' : 'compact'}
+      style={responsiveMetrics.isTablet ? { borderRadius: 14 } : null}
+    />
   );
 }
 
@@ -883,6 +759,8 @@ export default function ReadingHistoryScreen({ navigation, site, source }) {
   const styles = useMemo(() => createStyles(palette, isDark, responsiveMetrics), [palette, isDark, responsiveMetrics]);
   const isOfficeView = source === 'office-dashboard';
   const isCompactFilters = width < 430;
+  const useTabletFilterRow = isOfficeView && responsiveMetrics.isTablet;
+  const useMobileFilterPanel = !responsiveMetrics.isTablet;
   const [tableMode, setTableMode] = useState(site?.type || 'CHLORINATION');
   const [fromDate, setFromDate] = useState('');
   const [toDate, setToDate] = useState('');
@@ -895,6 +773,8 @@ export default function ReadingHistoryScreen({ navigation, site, source }) {
   const [exporting, setExporting] = useState(false);
   const [exportFormat, setExportFormat] = useState('csv');
   const [message, setMessage] = useState('');
+  const [messageTone, setMessageTone] = useState('info');
+  const [lastUpdatedAt, setLastUpdatedAt] = useState(null);
   const [pickerTarget, setPickerTarget] = useState(null);
   const [operatorSummaryDismissed, setOperatorSummaryDismissed] = useState(false);
   const resolvedTableMode = isOfficeView ? tableMode : site?.type || tableMode;
@@ -1011,6 +891,7 @@ export default function ReadingHistoryScreen({ navigation, site, source }) {
   async function loadHistory(nextFilters) {
     setLoading(true);
     setMessage('');
+    setMessageTone('info');
 
     const effectiveTableMode = nextFilters?.tableMode ?? tableMode;
     const effectiveHistoryView = nextFilters?.historyView ?? activeHistoryView;
@@ -1026,6 +907,7 @@ export default function ReadingHistoryScreen({ navigation, site, source }) {
     if (effectiveFromDate && effectiveToDate && effectiveFromDate > effectiveToDate) {
       setItems([]);
       setLoading(false);
+      setMessageTone('error');
       setMessage('The "from" date must be on or before the "to" date.');
       return;
     }
@@ -1080,6 +962,8 @@ export default function ReadingHistoryScreen({ navigation, site, source }) {
 
       setItems(nextItems);
       setDailyAverageRows(averageRows);
+      setMessageTone('success');
+      setLastUpdatedAt(new Date());
       setMessage(
         isOfficeView && effectiveHistoryView === 'average'
           ? `Showing ${averageRows.length} ${effectiveTableMode.toLowerCase()} Daily Average row(s).`
@@ -1094,6 +978,7 @@ export default function ReadingHistoryScreen({ navigation, site, source }) {
     } catch (error) {
       setItems([]);
       setDailyAverageRows([]);
+      setMessageTone('error');
       setMessage(error.message || 'Failed to load readings.');
     } finally {
       setLoading(false);
@@ -1136,11 +1021,13 @@ export default function ReadingHistoryScreen({ navigation, site, source }) {
 
   async function handleExportFile() {
     if (!isOfficeView) {
+      setMessageTone('error');
       setMessage('Export is available only from the office dashboard.');
       return;
     }
 
     if (!arrangedItems.length && !dailyAverageRows.length) {
+      setMessageTone('info');
       setMessage(`Load some reading history first before exporting to ${exportFormat.toUpperCase()}.`);
       return;
     }
@@ -1263,23 +1150,48 @@ export default function ReadingHistoryScreen({ navigation, site, source }) {
         }
       }
 
+      setMessageTone('success');
       setMessage(buildNativeExportSuccessMessage(exportFormat, exportResult));
     } catch (error) {
+      setMessageTone('error');
       setMessage(error.message || `Failed to export ${exportFormat.toUpperCase()}.`);
     } finally {
       setExporting(false);
     }
   }
 
+  const headerStatusChips = [
+    {
+      key: 'connected',
+      label: messageTone === 'error' ? 'Connection issue' : 'Connected',
+      tone: messageTone === 'error' ? 'warning' : 'success',
+      iconName: messageTone === 'error' ? 'alert-circle-outline' : 'checkmark-circle-outline',
+      iconColor: messageTone === 'error' ? palette.amber500 : palette.successText,
+    },
+    {
+      key: 'alerts',
+      label: '0 alerts',
+      tone: 'neutral',
+      iconName: 'notifications-outline',
+      iconColor: palette.ink500,
+    },
+    {
+      key: 'updated',
+      label: `Updated ${formatHeaderUpdatedTime(lastUpdatedAt)}`,
+      tone: 'neutral',
+      iconName: 'ellipse',
+      iconColor: palette.teal500,
+    },
+  ];
+
   return (
     <ScreenShell
-      eyebrow={isOfficeView ? 'Office readings' : 'History'}
+      eyebrow="Live Supabase Workspace"
       title="Reading History"
-      subtitle={
-        isOfficeView
-          ? 'Review full reading history from the office side with site and date range filters.'
-          : `Review the full reading history for ${site?.name || 'your selected site'}.`
-      }
+      showMenuButton
+      statusChips={headerStatusChips}
+      refreshing={loading}
+      onRefresh={() => loadHistory()}
       keyboardAware
       keyboardAwareProps={{
         extraScrollHeight: 88,
@@ -1337,7 +1249,7 @@ export default function ReadingHistoryScreen({ navigation, site, source }) {
         null
       ) : null}
 
-      <Card style={styles.filterCard}>
+      <Card style={[styles.filterCard, useMobileFilterPanel && styles.filterCardMobile]}>
         <View style={styles.filterTitleRow}>
           <View style={styles.filterTitleMain}>
             <View style={styles.filterTitleIcon}>
@@ -1351,51 +1263,55 @@ export default function ReadingHistoryScreen({ navigation, site, source }) {
             </Pressable>
           ) : null}
         </View>
-        {isOfficeView ? (
-          <View style={styles.filterField}>
-            <Text style={styles.filterLabel}>Table view</Text>
-            <View style={styles.modeRow}>
-              <TableModeChip
-                label="Chlorination"
-                iconName="water-outline"
-                active={tableMode === 'CHLORINATION'}
-                onPress={async () => {
-                  setTableMode('CHLORINATION');
-                  setActiveHistoryView('records');
-                  await loadHistory({ tableMode: 'CHLORINATION' });
-                }}
-              />
-              <TableModeChip
-                label="Deepwell"
-                iconName="flash-outline"
-                active={tableMode === 'DEEPWELL'}
-                onPress={async () => {
-                  setTableMode('DEEPWELL');
-                  setActiveHistoryView('records');
-                  await loadHistory({ tableMode: 'DEEPWELL' });
-                }}
-              />
+        <View style={useTabletFilterRow ? styles.tabletFilterRow : null}>
+          {isOfficeView ? (
+            <View style={[styles.filterField, useTabletFilterRow && styles.tabletTableViewField, useMobileFilterPanel && styles.filterSection]}>
+              {useMobileFilterPanel ? <Text style={styles.filterSectionTitle}>Table</Text> : null}
+              <Text style={styles.filterLabel}>Table view</Text>
+              <View style={styles.modeRow}>
+                <TableModeChip
+                  label="Chlorination"
+                  iconName="water-outline"
+                  active={tableMode === 'CHLORINATION'}
+                  onPress={async () => {
+                    setTableMode('CHLORINATION');
+                    setActiveHistoryView('records');
+                    await loadHistory({ tableMode: 'CHLORINATION' });
+                  }}
+                />
+                <TableModeChip
+                  label="Deepwell"
+                  iconName="flash-outline"
+                  active={tableMode === 'DEEPWELL'}
+                  onPress={async () => {
+                    setTableMode('DEEPWELL');
+                    setActiveHistoryView('records');
+                    await loadHistory({ tableMode: 'DEEPWELL' });
+                  }}
+                />
+              </View>
             </View>
-          </View>
-        ) : (
-          <View style={styles.filterField}>
-            <Text style={styles.filterLabel}>Site view</Text>
-            <View style={styles.operatorTypePill}>
-              <Ionicons
-                name={resolvedTableMode === 'CHLORINATION' ? 'water-outline' : 'flash-outline'}
-                size={14}
-                color={palette.onAccent}
-              />
-              <Text style={styles.operatorTypePillText}>{resolvedTableMode || 'Selected site'}</Text>
+          ) : (
+            <View style={[styles.filterField, useMobileFilterPanel && styles.filterSection]}>
+              {useMobileFilterPanel ? <Text style={styles.filterSectionTitle}>Table</Text> : null}
+              <Text style={styles.filterLabel}>Site view</Text>
+              <View style={styles.operatorTypePill}>
+                <Ionicons
+                  name={resolvedTableMode === 'CHLORINATION' ? 'water-outline' : 'flash-outline'}
+                  size={14}
+                  color={palette.onAccent}
+                />
+                <Text style={styles.operatorTypePillText}>{resolvedTableMode || 'Selected site'}</Text>
+              </View>
             </View>
-          </View>
-        )}
+          )}
 
-        {Platform.OS === 'web' ? (
-          <View style={[styles.dateRangeRow, isCompactFilters && styles.dateRangeRowCompact]}>
+          {Platform.OS === 'web' ? (
+            <View style={[styles.dateRangeRow, useTabletFilterRow && styles.tabletDateRangeRow, isCompactFilters && styles.dateRangeRowCompact, useMobileFilterPanel && styles.filterSection]}>
+            {useMobileFilterPanel ? <Text style={styles.filterSectionTitle}>Date range</Text> : null}
             <View style={[styles.filterField, styles.dateRangeField, isCompactFilters && styles.dateRangeFieldCompact]}>
               <Text style={styles.filterLabel}>From date</Text>
-              <View style={styles.inputShell}>
+              <View style={[styles.inputShell, isCompactFilters && styles.compactInputShell]}>
                 <View style={styles.inputIconWrap}>
                   <Ionicons name="calendar-outline" size={15} color={palette.ink500} />
                 </View>
@@ -1404,14 +1320,14 @@ export default function ReadingHistoryScreen({ navigation, site, source }) {
                   onChangeText={setFromDate}
                   placeholder="YYYY-MM-DD"
                   placeholderTextColor={palette.ink500}
-                  style={styles.filterInput}
+                  style={[styles.filterInput, isCompactFilters && styles.compactFilterInput]}
                 />
               </View>
             </View>
 
             <View style={[styles.filterField, styles.dateRangeField, isCompactFilters && styles.dateRangeFieldCompact]}>
               <Text style={styles.filterLabel}>To date</Text>
-              <View style={styles.inputShell}>
+              <View style={[styles.inputShell, isCompactFilters && styles.compactInputShell]}>
                 <View style={styles.inputIconWrap}>
                   <Ionicons name="calendar-clear-outline" size={15} color={palette.ink500} />
                 </View>
@@ -1420,14 +1336,14 @@ export default function ReadingHistoryScreen({ navigation, site, source }) {
                   onChangeText={setToDate}
                   placeholder="YYYY-MM-DD"
                   placeholderTextColor={palette.ink500}
-                  style={styles.filterInput}
+                  style={[styles.filterInput, isCompactFilters && styles.compactFilterInput]}
                 />
               </View>
             </View>
 
             <View style={[styles.filterField, styles.limitInlineField, isCompactFilters && styles.limitInlineFieldCompact]}>
               <Text style={styles.filterLabel}>Limit</Text>
-              <View style={styles.inputShell}>
+              <View style={[styles.inputShell, isCompactFilters && styles.compactInputShell]}>
                 <View style={styles.inputIconWrap}>
                   <Ionicons name="list-outline" size={15} color={palette.ink500} />
                 </View>
@@ -1437,13 +1353,14 @@ export default function ReadingHistoryScreen({ navigation, site, source }) {
                   keyboardType="number-pad"
                   placeholder="50"
                   placeholderTextColor={palette.ink500}
-                  style={styles.filterInput}
+                  style={[styles.filterInput, isCompactFilters && styles.compactFilterInput]}
                 />
               </View>
             </View>
-          </View>
-        ) : (
-          <View style={[styles.dateRangeRow, isCompactFilters && styles.dateRangeRowCompact]}>
+            </View>
+          ) : (
+            <View style={[styles.dateRangeRow, useTabletFilterRow && styles.tabletDateRangeRow, isCompactFilters && styles.dateRangeRowCompact, useMobileFilterPanel && styles.filterSection]}>
+            {useMobileFilterPanel ? <Text style={styles.filterSectionTitle}>Date range</Text> : null}
             <View style={[styles.dateRangeField, isCompactFilters && styles.dateRangeFieldCompact]}>
               <MobileDateField
                 label="From date"
@@ -1462,7 +1379,7 @@ export default function ReadingHistoryScreen({ navigation, site, source }) {
             </View>
             <View style={[styles.filterField, styles.limitInlineField, isCompactFilters && styles.limitInlineFieldCompact]}>
               <Text style={styles.filterLabel}>Limit</Text>
-              <View style={styles.inputShell}>
+              <View style={[styles.inputShell, isCompactFilters && styles.compactInputShell]}>
                 <View style={styles.inputIconWrap}>
                   <Ionicons name="list-outline" size={15} color={palette.ink500} />
                 </View>
@@ -1472,14 +1389,16 @@ export default function ReadingHistoryScreen({ navigation, site, source }) {
                   keyboardType="number-pad"
                   placeholder="50"
                   placeholderTextColor={palette.ink500}
-                  style={styles.filterInput}
+                  style={[styles.filterInput, isCompactFilters && styles.compactFilterInput]}
                 />
               </View>
             </View>
-          </View>
-        )}
+            </View>
+          )}
+        </View>
 
-        <View style={styles.filterActions}>
+        <View style={[styles.filterActions, useMobileFilterPanel && styles.filterActionsSection]}>
+          {useMobileFilterPanel ? <Text style={styles.filterSectionTitle}>Actions</Text> : null}
           {!isOfficeView ? (
             <View style={styles.actionItem}>
               <PrimaryButton
@@ -1502,11 +1421,12 @@ export default function ReadingHistoryScreen({ navigation, site, source }) {
           </View>
           {isOfficeView ? (
             <View style={[styles.actionItem, styles.exportActionItem]}>
-              <ExportActionButton
+              <SplitExportButton
                 format={exportFormat}
                 loading={exporting}
                 onExport={handleExportFile}
                 onSelectFormat={setExportFormat}
+                size="action"
               />
             </View>
           ) : null}
@@ -1522,12 +1442,10 @@ export default function ReadingHistoryScreen({ navigation, site, source }) {
         ) : null}
       </Card>
 
-      {message ? <MessageBanner tone={items.length ? 'success' : 'info'}>{message}</MessageBanner> : null}
+      {message ? <MessageBanner tone={messageTone}>{message}</MessageBanner> : null}
 
       {loading ? (
-        <View style={styles.loadingWrap}>
-          <ActivityIndicator size="large" color={palette.teal600} />
-        </View>
+        <LoadingState label="Loading reading history" />
       ) : (
         <View style={styles.resultsStack}>
           <View style={styles.historyViewTabs}>
@@ -1676,6 +1594,34 @@ function createStyles(palette, isDark, responsiveMetrics = getResponsiveMetrics(
       zIndex: 20,
       elevation: 8,
     },
+    filterCardMobile: {
+      gap: 8,
+    },
+    filterSection: {
+      width: '100%',
+      flexDirection: 'column',
+      gap: 8,
+      borderWidth: 1,
+      borderColor: isDark ? '#203246' : '#D8E4F0',
+      backgroundColor: isDark ? '#0C1621' : '#F9FCFF',
+      borderRadius: 12,
+      padding: 10,
+    },
+    filterActionsSection: {
+      borderWidth: 1,
+      borderColor: isDark ? '#203246' : '#D8E4F0',
+      backgroundColor: isDark ? '#0C1621' : '#F9FCFF',
+      borderRadius: 12,
+      padding: 10,
+    },
+    filterSectionTitle: {
+      width: '100%',
+      color: palette.ink500,
+      fontSize: 10,
+      fontWeight: '900',
+      textTransform: 'uppercase',
+      letterSpacing: 0,
+    },
     operatorSummaryCard: {
       gap: 8,
       backgroundColor: isDark ? '#112B24' : '#ECFCF8',
@@ -1796,6 +1742,17 @@ function createStyles(palette, isDark, responsiveMetrics = getResponsiveMetrics(
     filterField: {
       gap: 6,
     },
+    tabletFilterRow: {
+      flexDirection: 'row',
+      alignItems: 'flex-end',
+      gap: 8,
+    },
+    tabletTableViewField: {
+      flexGrow: 0,
+      flexShrink: 1,
+      minWidth: 214,
+      maxWidth: 260,
+    },
     filterLabel: {
       color: palette.ink700,
       fontSize: 12,
@@ -1807,11 +1764,18 @@ function createStyles(palette, isDark, responsiveMetrics = getResponsiveMetrics(
       flexDirection: 'row',
       gap: 8,
     },
+    tabletDateRangeRow: {
+      flex: 1,
+      minWidth: 0,
+      alignItems: 'flex-end',
+      gap: 6,
+    },
     dateRangeRowCompact: {
       flexWrap: 'wrap',
     },
     dateRangeField: {
       flex: 1,
+      minWidth: 0,
     },
     dateRangeFieldCompact: {
       minWidth: 0,
@@ -1824,6 +1788,11 @@ function createStyles(palette, isDark, responsiveMetrics = getResponsiveMetrics(
       color: palette.ink900,
       fontSize: 13,
     },
+    compactFilterInput: {
+      minHeight: 38,
+      paddingVertical: 8,
+      fontSize: 11,
+    },
     inputShell: {
       minHeight: 44,
       flexDirection: 'row',
@@ -1835,6 +1804,12 @@ function createStyles(palette, isDark, responsiveMetrics = getResponsiveMetrics(
       backgroundColor: isDark ? '#0C1621' : '#F9FCFF',
       paddingHorizontal: 12,
     },
+    compactInputShell: {
+      minHeight: 38,
+      gap: 5,
+      paddingHorizontal: 8,
+      borderRadius: 12,
+    },
     inputRow: {
       width: '100%',
       flexDirection: 'row',
@@ -1842,7 +1817,7 @@ function createStyles(palette, isDark, responsiveMetrics = getResponsiveMetrics(
       gap: 8,
     },
     inputIconWrap: {
-      width: 18,
+      width: 16,
       alignItems: 'center',
       justifyContent: 'center',
     },
@@ -1855,30 +1830,8 @@ function createStyles(palette, isDark, responsiveMetrics = getResponsiveMetrics(
     modeRow: {
       flexDirection: 'row',
       flexWrap: 'wrap',
-      gap: 6,
-    },
-    modeChip: {
-      flexDirection: 'row',
       alignItems: 'center',
       gap: 6,
-      paddingHorizontal: 10,
-      paddingVertical: 8,
-      borderRadius: 999,
-      backgroundColor: isDark ? '#132131' : '#F3F8FD',
-      borderWidth: 1,
-      borderColor: palette.line,
-    },
-    modeChipActive: {
-      backgroundColor: palette.navy700,
-      borderColor: palette.cyan300,
-    },
-    modeChipText: {
-      color: palette.ink700,
-      fontSize: 11,
-      fontWeight: '700',
-    },
-    modeChipTextActive: {
-      color: palette.onAccent,
     },
     operatorTypePill: {
       alignSelf: 'flex-start',
@@ -1907,11 +1860,20 @@ function createStyles(palette, isDark, responsiveMetrics = getResponsiveMetrics(
       paddingVertical: 10,
       justifyContent: 'center',
     },
+    compactDateField: {
+      minHeight: 38,
+      paddingHorizontal: 8,
+      paddingVertical: 8,
+      borderRadius: 12,
+    },
     dateFieldValue: {
       flex: 1,
       flexShrink: 1,
       color: palette.ink900,
       fontSize: 13,
+    },
+    compactDateFieldValue: {
+      fontSize: 11,
     },
     dateFieldPlaceholder: {
       color: palette.ink500,
@@ -2015,113 +1977,6 @@ function createStyles(palette, isDark, responsiveMetrics = getResponsiveMetrics(
     shiftArrangeChipTextActive: {
       color: palette.onAccent,
     },
-    exportButtonLabel: {
-      fontSize: 11,
-      lineHeight: 13,
-    },
-    exportButtonShell: {
-      position: 'relative',
-      zIndex: 40,
-    },
-    exportButtonWrap: {
-      flexDirection: 'row',
-      alignItems: 'stretch',
-      borderRadius: 14,
-      borderWidth: 1,
-      borderColor: isDark ? '#1A655E' : '#B4E5DE',
-      backgroundColor: isDark ? '#102824' : '#F3FCFA',
-      overflow: 'hidden',
-    },
-    exportPrimaryButton: {
-      flex: 1,
-      minHeight: 44,
-      justifyContent: 'center',
-      paddingHorizontal: 10,
-    },
-    exportPrimaryButtonPressed: {
-      backgroundColor: isDark ? '#143530' : '#E4F8F4',
-    },
-    exportPrimaryContent: {
-      flexDirection: 'row',
-      alignItems: 'center',
-      justifyContent: 'center',
-      gap: 6,
-    },
-    exportPrimaryText: {
-      color: palette.ink900,
-      fontSize: 10,
-      fontWeight: '800',
-      lineHeight: 12,
-    },
-    exportFormatToggle: {
-      minWidth: 58,
-      paddingHorizontal: 8,
-      borderLeftWidth: 1,
-      borderLeftColor: isDark ? '#1A655E' : '#B4E5DE',
-      alignItems: 'center',
-      justifyContent: 'center',
-      gap: 2,
-      backgroundColor: isDark ? '#11312D' : '#E5F5F3',
-    },
-    exportFormatTogglePressed: {
-      backgroundColor: isDark ? '#173B36' : '#DDF4EF',
-    },
-    exportFormatToggleText: {
-      color: palette.ink900,
-      fontSize: 9,
-      fontWeight: '800',
-      lineHeight: 11,
-    },
-    exportDropdownMenu: {
-      position: 'absolute',
-      top: '100%',
-      right: 0,
-      marginTop: 6,
-      minWidth: 104,
-      borderRadius: 12,
-      borderWidth: 1,
-      borderColor: isDark ? '#1A655E' : '#B4E5DE',
-      backgroundColor: isDark ? '#102824' : '#F3FCFA',
-      overflow: 'hidden',
-      zIndex: 10,
-      elevation: 6,
-      shadowColor: '#09131C',
-      shadowOpacity: isDark ? 0.28 : 0.1,
-      shadowRadius: 12,
-      shadowOffset: { width: 0, height: 8 },
-    },
-    exportDropdownItem: {
-      flexDirection: 'row',
-      alignItems: 'center',
-      gap: 7,
-      paddingHorizontal: 12,
-      paddingVertical: 10,
-      borderBottomWidth: 1,
-      borderBottomColor: isDark ? '#1A655E' : '#D7EEEA',
-    },
-    exportDropdownItemLast: {
-      borderBottomWidth: 0,
-    },
-    exportDropdownItemActive: {
-      backgroundColor: isDark ? '#143530' : '#E7F8F3',
-    },
-    exportDropdownItemPressed: {
-      backgroundColor: isDark ? '#173B36' : '#DDF4EF',
-    },
-    exportDropdownItemText: {
-      color: palette.ink700,
-      fontSize: 11,
-      fontWeight: '700',
-    },
-    exportDropdownItemTextActive: {
-      color: palette.ink900,
-      fontWeight: '800',
-    },
-    loadingWrap: {
-      justifyContent: 'center',
-      alignItems: 'center',
-      paddingVertical: 28,
-    },
     resultsStack: {
       gap: 12,
     },
@@ -2218,28 +2073,6 @@ function createStyles(palette, isDark, responsiveMetrics = getResponsiveMetrics(
       color: isDark ? palette.ink900 : palette.navy900,
       fontWeight: '700',
     },
-    emptyTitle: {
-      marginTop: 10,
-      color: palette.ink900,
-      fontSize: 17,
-      fontWeight: '800',
-    },
-    emptyBody: {
-      marginTop: 8,
-      color: palette.ink700,
-      fontSize: 14,
-      lineHeight: 20,
-    },
-    emptyIconWrap: {
-      width: 34,
-      height: 34,
-      borderRadius: 999,
-      alignItems: 'center',
-      justifyContent: 'center',
-      backgroundColor: isDark ? '#16304A' : '#EAF2FB',
-      borderWidth: 1,
-      borderColor: isDark ? '#31506E' : '#C9DDF3',
-    },
   }, responsiveMetrics, {
     exclude: [
       'tableColumn.width',
@@ -2249,4 +2082,15 @@ function createStyles(palette, isDark, responsiveMetrics = getResponsiveMetrics(
       'tableCell.flex',
     ],
   }));
+}
+
+function formatHeaderUpdatedTime(value) {
+  if (!(value instanceof Date)) {
+    return '--:--';
+  }
+
+  return value.toLocaleTimeString('en-US', {
+    hour: '2-digit',
+    minute: '2-digit',
+  });
 }

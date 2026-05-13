@@ -86,7 +86,7 @@ function createStyles(palette, isDark, metrics) {
       fontSize: 15,
       lineHeight: 18,
       fontWeight: '800',
-      letterSpacing: 0.3,
+      letterSpacing: 0,
       textAlign: 'center',
     },
     primaryLabel: {
