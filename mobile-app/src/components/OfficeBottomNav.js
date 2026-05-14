@@ -1,8 +1,10 @@
-import { useEffect, useMemo, useRef } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Animated, Pressable, StyleSheet, Text, View, useWindowDimensions } from 'react-native';
 import Ionicons from '@expo/vector-icons/Ionicons';
+import { useAuth } from '../context/AuthContext';
 import { useTheme } from '../context/ThemeContext';
 import { getResponsiveMetrics, scaleStyleDefinitions } from '../theme';
+import { loadNotificationUnreadCount } from '../utils/notificationState';
 
 const ITEMS = [
   {
@@ -10,7 +12,7 @@ const ITEMS = [
     label: 'Dashboard',
     iconName: 'grid-outline',
     routeName: 'office-dashboard',
-    params: {},
+    params: { section: 'overview' },
   },
   {
     key: 'graphs',
@@ -36,10 +38,12 @@ const ITEMS = [
 ];
 
 export default function OfficeBottomNav({ activeKey, navigation }) {
+  const { profile } = useAuth();
   const { palette, isDark } = useTheme();
   const { width } = useWindowDimensions();
   const metrics = useMemo(() => getResponsiveMetrics(width), [width]);
   const styles = useMemo(() => createStyles(palette, isDark, metrics), [palette, isDark, metrics]);
+  const [unreadNotificationCount, setUnreadNotificationCount] = useState(0);
   const activeScales = useRef(
     Object.fromEntries(ITEMS.map((item) => [item.key, new Animated.Value(item.key === activeKey ? 1 : 0)]))
   ).current;
@@ -54,6 +58,25 @@ export default function OfficeBottomNav({ activeKey, navigation }) {
       }).start();
     });
   }, [activeKey, activeScales]);
+
+  useEffect(() => {
+    let mounted = true;
+
+    async function refreshUnreadCount() {
+      const nextCount = await loadNotificationUnreadCount(profile);
+      if (mounted) {
+        setUnreadNotificationCount(nextCount);
+      }
+    }
+
+    refreshUnreadCount();
+    const interval = setInterval(refreshUnreadCount, 3000);
+
+    return () => {
+      mounted = false;
+      clearInterval(interval);
+    };
+  }, [activeKey, profile?.id, profile?.email]);
 
   return (
     <View style={styles.navWrap}>
@@ -96,6 +119,13 @@ export default function OfficeBottomNav({ activeKey, navigation }) {
                 size={18}
                 color={active ? palette.onAccent : palette.ink500}
               />
+              {item.key === 'notifications' && unreadNotificationCount > 0 ? (
+                <View style={styles.unreadBadge}>
+                  <Text style={styles.unreadBadgeText}>
+                    {unreadNotificationCount > 9 ? '9+' : unreadNotificationCount}
+                  </Text>
+                </View>
+              ) : null}
               <Text
                 numberOfLines={1}
                 adjustsFontSizeToFit
@@ -169,6 +199,28 @@ function createStyles(palette, isDark, metrics) {
       paddingHorizontal: 4,
       overflow: 'hidden',
     },
+    unreadBadge: {
+      position: 'absolute',
+      top: 5,
+      right: metrics.width < 390 ? 10 : 14,
+      minWidth: 16,
+      height: 16,
+      alignItems: 'center',
+      justifyContent: 'center',
+      borderRadius: 999,
+      borderWidth: 1,
+      borderColor: isDark ? '#0C1824' : '#FFFFFF',
+      backgroundColor: palette.amber500,
+      paddingHorizontal: 4,
+      zIndex: 20,
+      elevation: 20,
+    },
+    unreadBadgeText: {
+      color: '#11233B',
+      fontSize: 8,
+      lineHeight: 10,
+      fontWeight: '900',
+    },
     navItemActive: {
       backgroundColor: 'transparent',
     },
@@ -207,6 +259,9 @@ function createStyles(palette, isDark, metrics) {
       'activePill.right',
       'activePill.bottom',
       'activePill.left',
+      'unreadBadge.position',
+      'unreadBadge.zIndex',
+      'unreadBadge.elevation',
     ],
   }));
 }

@@ -1,17 +1,17 @@
-import { useEffect, useMemo, useState } from 'react';
-import { Modal, Pressable, ScrollView, StyleSheet, Text, View, useWindowDimensions } from 'react-native';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { Animated, Modal, Pressable, ScrollView, StyleSheet, Text, View, useWindowDimensions } from 'react-native';
 import Ionicons from '@expo/vector-icons/Ionicons';
 import LottieView from 'lottie-react-native';
 import Card from '../components/Card';
 import MessageBanner from '../components/MessageBanner';
 import PrimaryButton from '../components/PrimaryButton';
 import ScreenShell from '../components/ScreenShell';
-import { LoadingState } from '../components/UiControls';
 import { useAuth } from '../context/AuthContext';
 import { useTheme } from '../context/ThemeContext';
 import { supabase } from '../lib/supabase';
 import { approveOperatorProfile, assignProfileRole, getOfficeDashboardSnapshot } from '../services/office';
 import { getResponsiveMetrics, scaleStyleDefinitions } from '../theme';
+import { loadNotificationReadKeys, saveNotificationReadKeys, saveNotificationUnreadCount } from '../utils/notificationState';
 import { formatTimestamp } from '../utils/time';
 
 let styles = StyleSheet.create({});
@@ -83,6 +83,50 @@ function formatMaybeTimestamp(value) {
 
   const parsed = new Date(value);
   return Number.isNaN(parsed.getTime()) ? value : formatTimestamp(parsed);
+}
+
+function formatRelativeTime(value, now = Date.now()) {
+  if (!value) {
+    return '-';
+  }
+
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) {
+    return String(value);
+  }
+
+  const diffMs = Math.max(0, now - parsed.getTime());
+  const minutes = Math.floor(diffMs / 60000);
+
+  if (minutes < 1) {
+    return 'Just now';
+  }
+
+  if (minutes < 60) {
+    return `${minutes}m ago`;
+  }
+
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) {
+    return `${hours}h ago`;
+  }
+
+  const days = Math.floor(hours / 24);
+  if (days < 7) {
+    return `${days}d ago`;
+  }
+
+  const weeks = Math.floor(days / 7);
+  if (weeks < 5) {
+    return `${weeks}w ago`;
+  }
+
+  const months = Math.floor(days / 30);
+  if (months < 12) {
+    return `${months}mo ago`;
+  }
+
+  return `${Math.floor(days / 365)}y ago`;
 }
 
 function formatHeaderUpdatedTime(value) {
@@ -445,7 +489,7 @@ function buildMonitoringNotifications({ dashboard, operationAlerts, lastUpdatedA
 
   if (lastUpdatedAt) {
     notifications.push(createNotification({
-      key: `sync-success-${new Date(lastUpdatedAt).getTime()}`,
+      key: 'sync-success',
       type: 'sync',
       tone: 'info',
       iconName: 'sync-circle-outline',
@@ -458,7 +502,7 @@ function buildMonitoringNotifications({ dashboard, operationAlerts, lastUpdatedA
 
   if (connectionTone === 'error') {
     notifications.push(createNotification({
-      key: `sync-failed-${Date.now()}`,
+      key: 'sync-failed',
       type: 'sync',
       tone: 'critical',
       iconName: 'cloud-offline-outline',
@@ -804,7 +848,7 @@ function NotificationCard({ item, unread }) {
           </View>
         </View>
         <Text style={styles.notificationDescription}>{item.description}</Text>
-        <Text style={styles.notificationTimestamp}>{formatMaybeTimestamp(item.timestamp)}</Text>
+        <Text style={styles.notificationTimestamp}>{formatRelativeTime(item.timestamp)}</Text>
       </View>
     </View>
   );
@@ -844,6 +888,131 @@ function EntityCard({ children, style, accentStyle }) {
   );
 }
 
+function DashboardSkeletonBlock({ pulseOpacity, style }) {
+  return <Animated.View style={[styles.dashboardSkeletonBlock, style, { opacity: pulseOpacity }]} />;
+}
+
+function DashboardSkeletonCard({ children, style }) {
+  return (
+    <Card style={[styles.panelCard, styles.dashboardSkeletonCard, style]}>
+      {children}
+    </Card>
+  );
+}
+
+function DashboardSkeleton({ isAdmin, isWide }) {
+  const pulseOpacity = useRef(new Animated.Value(0.55)).current;
+
+  useEffect(() => {
+    const animation = Animated.loop(
+      Animated.sequence([
+        Animated.timing(pulseOpacity, {
+          toValue: 1,
+          duration: 760,
+          useNativeDriver: true,
+        }),
+        Animated.timing(pulseOpacity, {
+          toValue: 0.55,
+          duration: 760,
+          useNativeDriver: true,
+        }),
+      ])
+    );
+
+    animation.start();
+    return () => animation.stop();
+  }, [pulseOpacity]);
+
+  const skeleton = (style) => <DashboardSkeletonBlock pulseOpacity={pulseOpacity} style={style} />;
+
+  return (
+    <View style={styles.sectionStack}>
+      {isAdmin ? (
+        <DashboardSkeletonCard>
+          <View style={styles.dashboardSkeletonHeaderRow}>
+            {skeleton(styles.dashboardSkeletonTitle)}
+            {skeleton(styles.dashboardSkeletonMeta)}
+          </View>
+          <View style={styles.dashboardSkeletonChipRow}>
+            {[0, 1, 2, 3].map((item) => (
+              <DashboardSkeletonBlock
+                key={`chip-${item}`}
+                pulseOpacity={pulseOpacity}
+                style={[styles.dashboardSkeletonChip, item === 0 && styles.dashboardSkeletonChipWide]}
+              />
+            ))}
+          </View>
+        </DashboardSkeletonCard>
+      ) : null}
+
+      <DashboardSkeletonCard>
+        <View style={styles.dashboardSkeletonSectionHeader}>
+          {skeleton(styles.dashboardSkeletonIcon)}
+          <View style={styles.dashboardSkeletonHeaderCopy}>
+            {skeleton(styles.dashboardSkeletonHeading)}
+            {skeleton(styles.dashboardSkeletonSubheading)}
+          </View>
+        </View>
+        <View style={styles.statsGrid}>
+          {[0, 1, 2, 3, 4].map((item) => (
+            <View key={`stat-${item}`} style={styles.dashboardSkeletonStatTile}>
+              <View style={styles.dashboardSkeletonHeaderRow}>
+                {skeleton(styles.dashboardSkeletonTinyLine)}
+                {skeleton(styles.dashboardSkeletonSmallIcon)}
+              </View>
+              {skeleton(styles.dashboardSkeletonValue)}
+            </View>
+          ))}
+        </View>
+      </DashboardSkeletonCard>
+
+      <View style={[styles.summaryGrid, isWide && styles.summaryGridWide]}>
+        {[0, 1, 2].map((item) => (
+          <DashboardSkeletonCard key={`summary-${item}`} style={styles.summaryCard}>
+            <View style={styles.dashboardSkeletonHeaderRow}>
+              <View style={styles.dashboardSkeletonSummaryHeading}>
+                {skeleton(styles.dashboardSkeletonIcon)}
+                {skeleton(styles.dashboardSkeletonSummaryTitle)}
+              </View>
+              {skeleton(styles.dashboardSkeletonAction)}
+            </View>
+            {skeleton(styles.dashboardSkeletonSummaryValue)}
+            {skeleton(styles.dashboardSkeletonSummaryBody)}
+            {skeleton(styles.dashboardSkeletonSummaryBodyShort)}
+          </DashboardSkeletonCard>
+        ))}
+      </View>
+
+      <DashboardSkeletonCard>
+        <View style={styles.dashboardSkeletonSectionHeader}>
+          {skeleton(styles.dashboardSkeletonIcon)}
+          <View style={styles.dashboardSkeletonHeaderCopy}>
+            {skeleton(styles.dashboardSkeletonHeading)}
+            {skeleton(styles.dashboardSkeletonSubheading)}
+          </View>
+        </View>
+        <View style={styles.list}>
+          {[0, 1, 2].map((item) => (
+            <View key={`row-${item}`} style={styles.dashboardSkeletonEntity}>
+              <View style={styles.dashboardSkeletonHeaderRow}>
+                <View style={styles.dashboardSkeletonHeaderCopy}>
+                  {skeleton(styles.dashboardSkeletonRowTitle)}
+                  {skeleton(styles.dashboardSkeletonRowMeta)}
+                </View>
+                {skeleton(styles.dashboardSkeletonBadge)}
+              </View>
+              <View style={styles.metaStrip}>
+                {skeleton(styles.dashboardSkeletonMetaPill)}
+                {skeleton(styles.dashboardSkeletonMetaPill)}
+              </View>
+            </View>
+          ))}
+        </View>
+      </DashboardSkeletonCard>
+    </View>
+  );
+}
+
 export default function OfficeDashboardScreen({ navigation, initialSection }) {
   const { profile } = useAuth();
   const { palette, isDark } = useTheme();
@@ -852,8 +1021,9 @@ export default function OfficeDashboardScreen({ navigation, initialSection }) {
   styles = useMemo(() => createStyles(palette, isDark, responsiveMetrics), [palette, isDark, responsiveMetrics]);
   const isWide = width >= 980;
   const isAdmin = profile?.role === 'admin';
+  const requestedSection = initialSection || (isAdmin ? 'overview' : 'readings');
   const roleChoices = ['operator', 'supervisor', 'manager', 'admin'];
-  const [activeSection, setActiveSection] = useState('overview');
+  const [activeSection, setActiveSection] = useState(requestedSection);
   const [dashboard, setDashboard] = useState({
     stats: {
       totalOperators: 0,
@@ -903,10 +1073,25 @@ export default function OfficeDashboardScreen({ navigation, initialSection }) {
   const [liveNotifications, setLiveNotifications] = useState([]);
 
   useEffect(() => {
-    if (initialSection) {
-      setActiveSection(initialSection);
+    setActiveSection(requestedSection);
+  }, [requestedSection]);
+
+  useEffect(() => {
+    let mounted = true;
+
+    async function restoreReadNotifications() {
+      const storedReadKeys = await loadNotificationReadKeys(profile);
+      if (mounted) {
+        setReadNotificationKeys(storedReadKeys);
+      }
     }
-  }, [initialSection]);
+
+    restoreReadNotifications();
+
+    return () => {
+      mounted = false;
+    };
+  }, [profile?.id, profile?.email]);
 
   const sections = useMemo(() => {
     if (!isAdmin) {
@@ -1234,6 +1419,11 @@ export default function OfficeDashboardScreen({ navigation, initialSection }) {
     [notificationFilter, notificationItems]
   );
   const unreadNotificationCount = filteredNotifications.filter((item) => !readNotificationKeys[item.key]).length;
+  const totalUnreadNotificationCount = notificationItems.filter((item) => !readNotificationKeys[item.key]).length;
+
+  useEffect(() => {
+    saveNotificationUnreadCount(profile, totalUnreadNotificationCount);
+  }, [profile?.id, profile?.email, totalUnreadNotificationCount]);
 
   const canViewGraphs = profile?.role === 'manager' || profile?.role === 'supervisor';
   const headerStatusChips = [
@@ -1571,9 +1761,10 @@ export default function OfficeDashboardScreen({ navigation, initialSection }) {
           filter={notificationFilter}
           onChangeFilter={setNotificationFilter}
           onMarkAllRead={() => {
-            setReadNotificationKeys(
-              Object.fromEntries(notificationItems.map((item) => [item.key, true]))
-            );
+            const nextReadKeys = Object.fromEntries(notificationItems.map((item) => [item.key, true]));
+            setReadNotificationKeys(nextReadKeys);
+            saveNotificationReadKeys(profile, nextReadKeys);
+            saveNotificationUnreadCount(profile, 0);
           }}
           palette={palette}
         />
@@ -1951,6 +2142,7 @@ export default function OfficeDashboardScreen({ navigation, initialSection }) {
       eyebrow="Live Supabase Workspace"
       title={activeSection === 'notifications' ? 'Notification' : 'Dashboard'}
       showMenuButton
+      stickyHeader
       statusChips={headerStatusChips}
       refreshing={loading}
       onRefresh={() => loadDashboard()}
@@ -2004,7 +2196,7 @@ export default function OfficeDashboardScreen({ navigation, initialSection }) {
       {message ? <MessageBanner tone={tone}>{message}</MessageBanner> : null}
 
       {loading ? (
-        <LoadingState label="Loading dashboard data" />
+        <DashboardSkeleton isAdmin={isAdmin} isWide={isWide} />
       ) : (
         renderSection()
       )}
@@ -2315,6 +2507,146 @@ function createStyles(palette, isDark, responsiveMetrics) {
   panelCard: {
     gap: 8,
     padding: 11,
+  },
+  dashboardSkeletonCard: {
+    overflow: 'hidden',
+  },
+  dashboardSkeletonBlock: {
+    backgroundColor: isDark ? '#1C3346' : '#E5EEF6',
+    borderRadius: 999,
+  },
+  dashboardSkeletonHeaderRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 10,
+  },
+  dashboardSkeletonSectionHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  dashboardSkeletonHeaderCopy: {
+    flex: 1,
+    minWidth: 0,
+    gap: 6,
+  },
+  dashboardSkeletonTitle: {
+    width: 92,
+    height: 14,
+  },
+  dashboardSkeletonMeta: {
+    width: 64,
+    height: 12,
+  },
+  dashboardSkeletonChipRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 6,
+  },
+  dashboardSkeletonChip: {
+    width: 78,
+    height: 28,
+  },
+  dashboardSkeletonChipWide: {
+    width: 98,
+  },
+  dashboardSkeletonIcon: {
+    width: 24,
+    height: 24,
+  },
+  dashboardSkeletonSmallIcon: {
+    width: 22,
+    height: 22,
+  },
+  dashboardSkeletonHeading: {
+    width: 142,
+    maxWidth: '70%',
+    height: 15,
+  },
+  dashboardSkeletonSubheading: {
+    width: 220,
+    maxWidth: '86%',
+    height: 10,
+  },
+  dashboardSkeletonTinyLine: {
+    width: 54,
+    height: 8,
+  },
+  dashboardSkeletonValue: {
+    width: 42,
+    height: 18,
+    marginTop: 6,
+  },
+  dashboardSkeletonStatTile: {
+    minWidth: 104,
+    flexGrow: 1,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: palette.line,
+    backgroundColor: isDark ? palette.mist : '#F7FBFF',
+    paddingHorizontal: 9,
+    paddingVertical: 8,
+  },
+  dashboardSkeletonSummaryHeading: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 7,
+    flex: 1,
+    minWidth: 0,
+  },
+  dashboardSkeletonSummaryTitle: {
+    width: 108,
+    maxWidth: '78%',
+    height: 12,
+  },
+  dashboardSkeletonAction: {
+    width: 48,
+    height: 22,
+  },
+  dashboardSkeletonSummaryValue: {
+    width: 62,
+    height: 19,
+    marginTop: 4,
+  },
+  dashboardSkeletonSummaryBody: {
+    width: '92%',
+    height: 9,
+    marginTop: 2,
+    borderRadius: 6,
+  },
+  dashboardSkeletonSummaryBodyShort: {
+    width: '62%',
+    height: 9,
+    borderRadius: 6,
+  },
+  dashboardSkeletonEntity: {
+    gap: 8,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: palette.line,
+    backgroundColor: isDark ? palette.mist : '#FAFDFF',
+    padding: 10,
+  },
+  dashboardSkeletonRowTitle: {
+    width: 150,
+    maxWidth: '72%',
+    height: 13,
+  },
+  dashboardSkeletonRowMeta: {
+    width: 210,
+    maxWidth: '88%',
+    height: 10,
+  },
+  dashboardSkeletonBadge: {
+    width: 66,
+    height: 24,
+  },
+  dashboardSkeletonMetaPill: {
+    minWidth: 96,
+    flexGrow: 1,
+    height: 45,
+    borderRadius: 14,
   },
   statsGrid: {
     marginTop: 4,
