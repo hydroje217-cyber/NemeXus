@@ -20,6 +20,7 @@ export default function ScreenShell({
   hideThemeToggle = false,
   children,
   scroll = true,
+  stickyHeader = false,
   keyboardAware = false,
   keyboardAwareProps,
   refreshing = false,
@@ -91,7 +92,7 @@ export default function ScreenShell({
             style={styles.accountDismissLayer}
           />
         ) : null}
-        <View style={styles.hero}>
+        <View style={[styles.hero, stickyHeader && Platform.OS === 'web' && styles.heroSticky]}>
           <View style={styles.heroTopRow}>
             <View style={styles.heroIdentityGroup}>
               <View style={styles.heroCopy}>
@@ -260,8 +261,13 @@ function createStyles(palette, isDark, metrics) {
       backgroundColor: palette.navy900,
       borderBottomWidth: 1,
       borderBottomColor: isDark ? 'rgba(255,255,255,0.1)' : 'rgba(255,255,255,0.08)',
+      overflow: 'visible',
       zIndex: 300,
       elevation: 300,
+    },
+    heroSticky: {
+      position: 'sticky',
+      top: 0,
     },
     accountDismissLayer: {
       position: 'absolute',
@@ -277,6 +283,8 @@ function createStyles(palette, isDark, metrics) {
       alignItems: 'center',
       justifyContent: 'space-between',
       gap: metrics.isTablet ? 10 : 12,
+      zIndex: 400,
+      elevation: 400,
     },
     heroIdentityGroup: {
       flexDirection: 'row',
@@ -319,11 +327,14 @@ function createStyles(palette, isDark, metrics) {
       gap: 4,
     },
     statusChipRowHeader: {
+      position: 'relative',
       display: metrics.isTablet ? 'flex' : 'none',
       flexShrink: 0,
       justifyContent: 'flex-end',
       marginLeft: 'auto',
       marginRight: 2,
+      zIndex: 1,
+      elevation: 1,
     },
     statusChipRowBelow: {
       display: metrics.isTablet ? 'none' : 'flex',
@@ -333,8 +344,8 @@ function createStyles(palette, isDark, metrics) {
     },
     accountControlWrap: {
       position: 'relative',
-      zIndex: 360,
-      elevation: 360,
+      zIndex: 1200,
+      elevation: 1200,
     },
     accountIconButton: {
       width: 40,
@@ -365,8 +376,8 @@ function createStyles(palette, isDark, metrics) {
       shadowOpacity: isDark ? 0.24 : 0.12,
       shadowRadius: 16,
       shadowOffset: { width: 0, height: 10 },
-      elevation: 380,
-      zIndex: 380,
+      elevation: 1300,
+      zIndex: 1300,
     },
     accountMenuTop: {
       flexDirection: 'row',

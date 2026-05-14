@@ -1,5 +1,6 @@
 import { useContext, useEffect, useMemo, useRef, useState } from 'react';
 import {
+  Modal,
   Platform,
   ScrollView,
   TextInput,
@@ -50,6 +51,31 @@ const LOGSHEET_SHIFT_ROWS = [
   { label: 'A-Shift', slots: LOGSHEET_TIME_SLOTS.slice(14, 30) },
   { label: 'B-Shift', slots: LOGSHEET_TIME_SLOTS.slice(30, 46) },
   { label: 'C-Shift', slots: LOGSHEET_TIME_SLOTS.slice(46) },
+];
+const CHLORINATION_READING_FIELDS = [
+  { key: 'totalizer', label: 'Totalizer' },
+  { key: 'pressure_psi', label: 'Pressure', unit: 'psi' },
+  { key: 'rc_ppm', label: 'RC', unit: 'ppm' },
+  { key: 'turbidity_ntu', label: 'Turbidity', unit: 'NTU' },
+  { key: 'ph', label: 'pH' },
+  { key: 'tds_ppm', label: 'TDS', unit: 'ppm' },
+  { key: 'tank_level_liters', label: 'Tank level', unit: 'liters' },
+  { key: 'flowrate_m3hr', label: 'Flowrate', unit: 'm3/hr' },
+  { key: 'chlorine_consumed', label: 'Chlorine used', unit: 'kg' },
+  { key: 'peroxide_consumption', label: 'Peroxide used' },
+  { key: 'chlorination_power_kwh', label: 'Power used', unit: 'kWh' },
+];
+const DEEPWELL_READING_FIELDS = [
+  { key: 'upstream_pressure_psi', label: 'Upstream pressure', unit: 'psi' },
+  { key: 'downstream_pressure_psi', label: 'Downstream pressure', unit: 'psi' },
+  { key: 'flowrate_m3hr', label: 'Flowrate', unit: 'm3/hr' },
+  { key: 'vfd_frequency_hz', label: 'VFD frequency', unit: 'Hz' },
+  { key: 'voltage_l1_v', label: 'Voltage L1', unit: 'V' },
+  { key: 'voltage_l2_v', label: 'Voltage L2', unit: 'V' },
+  { key: 'voltage_l3_v', label: 'Voltage L3', unit: 'V' },
+  { key: 'amperage_a', label: 'Amperage', unit: 'A' },
+  { key: 'tds_ppm', label: 'TDS', unit: 'ppm' },
+  { key: 'power_kwh_shift', label: 'Shift power', unit: 'kWh' },
 ];
 
 function formatDateValue(date) {
@@ -659,12 +685,60 @@ function formatAverageValue(value) {
   return Number(value).toFixed(2);
 }
 
+function formatRecordedValue(value, unit) {
+  if (value === null || value === undefined || value === '') {
+    return '-';
+  }
+
+  return unit ? `${value} ${unit}` : String(value);
+}
+
+function getRecordedValueRows(reading) {
+  if (!reading) {
+    return [];
+  }
+
+  const readingType = String(reading.site_type || reading.site?.type || reading.sites?.type || '').toLowerCase();
+  const fields = readingType === 'deepwell' ? DEEPWELL_READING_FIELDS : CHLORINATION_READING_FIELDS;
+  return fields
+    .filter(({ key }) => reading[key] !== null && reading[key] !== undefined && reading[key] !== '')
+    .map((field) => ({
+      label: field.label,
+      value: formatRecordedValue(reading[field.key], field.unit),
+    }));
+}
+
+function formatMaybeHistoryTimestamp(value) {
+  if (!value) {
+    return '-';
+  }
+
+  const parsed = new Date(value);
+  return Number.isNaN(parsed.getTime()) ? value : formatShortDateTime(parsed);
+}
+
+function getReadingSummaryTitle(row) {
+  return row?.sites?.name || row?.site?.name || row?.date || 'Recorded values';
+}
+
+function getReadingSummaryMeta(row) {
+  return row?.slot_datetime ? formatTimeSlot(row.slot_datetime) : formatMaybeHistoryTimestamp(row?.reading_datetime);
+}
+
+function getReadingOperatorName(row) {
+  return row?.submitted_profile?.full_name || row?.submitted_profile?.email || '-';
+}
+
 function DataTable({ columns, rows, emptyMessage }) {
   const { palette, isDark } = useTheme();
   const { width } = useWindowDimensions();
   const responsiveMetrics = useMemo(() => getResponsiveMetrics(width), [width]);
   const styles = useMemo(() => createStyles(palette, isDark, responsiveMetrics), [palette, isDark, responsiveMetrics]);
-  const [selectedRowId, setSelectedRowId] = useState('');
+  const [selectedRow, setSelectedRow] = useState(null);
+
+  useEffect(() => {
+    setSelectedRow(null);
+  }, [rows]);
 
   if (!rows.length) {
     return (
@@ -677,6 +751,9 @@ function DataTable({ columns, rows, emptyMessage }) {
       </Card>
     );
   }
+
+  const summaryRows = getRecordedValueRows(selectedRow);
+  const submitter = getReadingOperatorName(selectedRow);
 
   return (
     <Card style={styles.tableCard}>
@@ -699,12 +776,14 @@ function DataTable({ columns, rows, emptyMessage }) {
           </View>
 
           {rows.map((row, rowIndex) => {
-            const isSelected = selectedRowId === row.id;
+            const isSelected = selectedRow?.id === row.id;
 
             return (
               <Pressable
                 key={row.id}
-                onPress={() => setSelectedRowId((current) => (current === row.id ? '' : row.id))}
+                accessibilityRole="button"
+                accessibilityLabel="Open reading summary"
+                onPress={() => setSelectedRow(row)}
                 style={({ pressed }) => [
                   styles.tableRow,
                   rowIndex % 2 === 0 ? styles.tableRowEven : styles.tableRowOdd,
@@ -731,6 +810,67 @@ function DataTable({ columns, rows, emptyMessage }) {
           })}
         </View>
       </ScrollView>
+
+      <Modal
+        visible={Boolean(selectedRow)}
+        transparent
+        animationType="fade"
+        statusBarTranslucent
+        onRequestClose={() => setSelectedRow(null)}
+      >
+        <View style={styles.readingSummaryOverlay}>
+          <Pressable style={styles.readingSummaryBackdrop} onPress={() => setSelectedRow(null)} />
+          <View style={styles.readingSummarySheet}>
+            <View style={styles.readingSummaryHeader}>
+              <View style={styles.readingSummaryTitleWrap}>
+                <Text style={styles.readingSummaryEyebrow}>
+                  {selectedRow?.site_type || selectedRow?.site?.type || selectedRow?.sites?.type || 'Reading'}
+                </Text>
+                <Text style={styles.readingSummaryTitle} numberOfLines={2}>
+                  {getReadingSummaryTitle(selectedRow)}
+                </Text>
+                <Text style={styles.readingSummaryMeta}>
+                  {getReadingSummaryMeta(selectedRow)}
+                </Text>
+              </View>
+              <Pressable onPress={() => setSelectedRow(null)} style={styles.readingSummaryClose}>
+                <Ionicons name="close" size={18} color={palette.ink700} />
+              </Pressable>
+            </View>
+
+            <View style={styles.readingSummaryMetaGrid}>
+              <View style={styles.readingSummaryMetaTile}>
+                <Text style={styles.readingSummaryMetaLabel}>Submitted by</Text>
+                <Text style={styles.readingSummaryMetaValue} numberOfLines={2}>{submitter}</Text>
+              </View>
+              <View style={styles.readingSummaryMetaTile}>
+                <Text style={styles.readingSummaryMetaLabel}>Saved</Text>
+                <Text style={styles.readingSummaryMetaValue}>{formatMaybeHistoryTimestamp(selectedRow?.created_at)}</Text>
+              </View>
+            </View>
+
+            <ScrollView style={styles.readingSummaryScroll} contentContainerStyle={styles.readingSummaryList}>
+              {summaryRows.length ? (
+                summaryRows.map((item) => (
+                  <View key={item.label} style={styles.readingSummaryRow}>
+                    <Text style={styles.readingSummaryLabel}>{item.label}</Text>
+                    <Text style={styles.readingSummaryValue}>{item.value}</Text>
+                  </View>
+                ))
+              ) : (
+                <MessageBanner tone="info">No numeric values were saved for this reading.</MessageBanner>
+              )}
+
+              {selectedRow?.remarks ? (
+                <View style={styles.readingSummaryRemarks}>
+                  <Text style={styles.readingSummaryLabel}>Remarks</Text>
+                  <Text style={styles.readingSummaryRemarksText}>{selectedRow.remarks}</Text>
+                </View>
+              ) : null}
+            </ScrollView>
+          </View>
+        </View>
+      </Modal>
     </Card>
   );
 }
@@ -1189,6 +1329,7 @@ export default function ReadingHistoryScreen({ navigation, site, source }) {
       eyebrow="Live Supabase Workspace"
       title="Reading History"
       showMenuButton
+      stickyHeader
       statusChips={headerStatusChips}
       refreshing={loading}
       onRefresh={() => loadHistory()}
@@ -1307,9 +1448,15 @@ export default function ReadingHistoryScreen({ navigation, site, source }) {
           )}
 
           {Platform.OS === 'web' ? (
-            <View style={[styles.dateRangeRow, useTabletFilterRow && styles.tabletDateRangeRow, isCompactFilters && styles.dateRangeRowCompact, useMobileFilterPanel && styles.filterSection]}>
+            <View style={[
+              styles.dateRangeRow,
+              useTabletFilterRow && styles.tabletDateRangeRow,
+              isCompactFilters && styles.dateRangeRowCompact,
+              useMobileFilterPanel && styles.filterSection,
+              useMobileFilterPanel && styles.mobileDateRangeSection,
+            ]}>
             {useMobileFilterPanel ? <Text style={styles.filterSectionTitle}>Date range</Text> : null}
-            <View style={[styles.filterField, styles.dateRangeField, isCompactFilters && styles.dateRangeFieldCompact]}>
+            <View style={[styles.filterField, styles.dateRangeField, isCompactFilters && styles.dateRangeFieldCompact, useMobileFilterPanel && styles.mobileDateRangeField]}>
               <Text style={styles.filterLabel}>From date</Text>
               <View style={[styles.inputShell, isCompactFilters && styles.compactInputShell]}>
                 <View style={styles.inputIconWrap}>
@@ -1325,7 +1472,7 @@ export default function ReadingHistoryScreen({ navigation, site, source }) {
               </View>
             </View>
 
-            <View style={[styles.filterField, styles.dateRangeField, isCompactFilters && styles.dateRangeFieldCompact]}>
+            <View style={[styles.filterField, styles.dateRangeField, isCompactFilters && styles.dateRangeFieldCompact, useMobileFilterPanel && styles.mobileDateRangeField]}>
               <Text style={styles.filterLabel}>To date</Text>
               <View style={[styles.inputShell, isCompactFilters && styles.compactInputShell]}>
                 <View style={styles.inputIconWrap}>
@@ -1341,7 +1488,7 @@ export default function ReadingHistoryScreen({ navigation, site, source }) {
               </View>
             </View>
 
-            <View style={[styles.filterField, styles.limitInlineField, isCompactFilters && styles.limitInlineFieldCompact]}>
+            <View style={[styles.filterField, styles.limitInlineField, isCompactFilters && styles.limitInlineFieldCompact, useMobileFilterPanel && styles.mobileDateRangeField]}>
               <Text style={styles.filterLabel}>Limit</Text>
               <View style={[styles.inputShell, isCompactFilters && styles.compactInputShell]}>
                 <View style={styles.inputIconWrap}>
@@ -1359,9 +1506,15 @@ export default function ReadingHistoryScreen({ navigation, site, source }) {
             </View>
             </View>
           ) : (
-            <View style={[styles.dateRangeRow, useTabletFilterRow && styles.tabletDateRangeRow, isCompactFilters && styles.dateRangeRowCompact, useMobileFilterPanel && styles.filterSection]}>
+            <View style={[
+              styles.dateRangeRow,
+              useTabletFilterRow && styles.tabletDateRangeRow,
+              isCompactFilters && styles.dateRangeRowCompact,
+              useMobileFilterPanel && styles.filterSection,
+              useMobileFilterPanel && styles.mobileDateRangeSection,
+            ]}>
             {useMobileFilterPanel ? <Text style={styles.filterSectionTitle}>Date range</Text> : null}
-            <View style={[styles.dateRangeField, isCompactFilters && styles.dateRangeFieldCompact]}>
+            <View style={[styles.dateRangeField, isCompactFilters && styles.dateRangeFieldCompact, useMobileFilterPanel && styles.mobileDateRangeField]}>
               <MobileDateField
                 label="From date"
                 value={fromDate}
@@ -1369,7 +1522,7 @@ export default function ReadingHistoryScreen({ navigation, site, source }) {
                 onPress={() => setPickerTarget('from')}
               />
             </View>
-            <View style={[styles.dateRangeField, isCompactFilters && styles.dateRangeFieldCompact]}>
+            <View style={[styles.dateRangeField, isCompactFilters && styles.dateRangeFieldCompact, useMobileFilterPanel && styles.mobileDateRangeField]}>
               <MobileDateField
                 label="To date"
                 value={toDate}
@@ -1377,7 +1530,7 @@ export default function ReadingHistoryScreen({ navigation, site, source }) {
                 onPress={() => setPickerTarget('to')}
               />
             </View>
-            <View style={[styles.filterField, styles.limitInlineField, isCompactFilters && styles.limitInlineFieldCompact]}>
+            <View style={[styles.filterField, styles.limitInlineField, isCompactFilters && styles.limitInlineFieldCompact, useMobileFilterPanel && styles.mobileDateRangeField]}>
               <Text style={styles.filterLabel}>Limit</Text>
               <View style={[styles.inputShell, isCompactFilters && styles.compactInputShell]}>
                 <View style={styles.inputIconWrap}>
@@ -1773,6 +1926,11 @@ function createStyles(palette, isDark, responsiveMetrics = getResponsiveMetrics(
     dateRangeRowCompact: {
       flexWrap: 'wrap',
     },
+    mobileDateRangeSection: {
+      flexDirection: 'column',
+      alignItems: 'stretch',
+      overflow: 'hidden',
+    },
     dateRangeField: {
       flex: 1,
       minWidth: 0,
@@ -1780,6 +1938,12 @@ function createStyles(palette, isDark, responsiveMetrics = getResponsiveMetrics(
     dateRangeFieldCompact: {
       minWidth: 0,
       flexBasis: '48%',
+    },
+    mobileDateRangeField: {
+      width: '100%',
+      flex: 0,
+      flexBasis: 'auto',
+      maxWidth: '100%',
     },
     filterInput: {
       minHeight: 44,
@@ -2073,6 +2237,142 @@ function createStyles(palette, isDark, responsiveMetrics = getResponsiveMetrics(
       color: isDark ? palette.ink900 : palette.navy900,
       fontWeight: '700',
     },
+    readingSummaryOverlay: {
+      flex: 1,
+      justifyContent: 'center',
+      padding: 18,
+    },
+    readingSummaryBackdrop: {
+      ...StyleSheet.absoluteFillObject,
+      backgroundColor: isDark ? 'rgba(3,10,17,0.78)' : 'rgba(17,35,59,0.44)',
+    },
+    readingSummarySheet: {
+      maxHeight: '82%',
+      borderRadius: 18,
+      borderWidth: 1,
+      borderColor: isDark ? '#27445E' : '#D8E6F5',
+      backgroundColor: isDark ? '#07131F' : '#FFFFFF',
+      padding: 14,
+      shadowColor: '#000000',
+      shadowOpacity: isDark ? 0.28 : 0.16,
+      shadowRadius: 20,
+      shadowOffset: { width: 0, height: 12 },
+      elevation: 8,
+    },
+    readingSummaryHeader: {
+      flexDirection: 'row',
+      alignItems: 'flex-start',
+      justifyContent: 'space-between',
+      gap: 12,
+    },
+    readingSummaryTitleWrap: {
+      flex: 1,
+      minWidth: 0,
+    },
+    readingSummaryEyebrow: {
+      color: palette.teal600,
+      fontSize: 10,
+      fontWeight: '900',
+      textTransform: 'uppercase',
+      letterSpacing: 0.4,
+    },
+    readingSummaryTitle: {
+      marginTop: 4,
+      color: palette.ink900,
+      fontSize: 18,
+      fontWeight: '900',
+    },
+    readingSummaryMeta: {
+      marginTop: 4,
+      color: palette.ink500,
+      fontSize: 11,
+      fontWeight: '700',
+    },
+    readingSummaryClose: {
+      width: 32,
+      height: 32,
+      borderRadius: 999,
+      alignItems: 'center',
+      justifyContent: 'center',
+      borderWidth: 1,
+      borderColor: palette.line,
+      backgroundColor: isDark ? '#132536' : '#F4F8FC',
+    },
+    readingSummaryMetaGrid: {
+      flexDirection: 'row',
+      flexWrap: 'wrap',
+      gap: 8,
+      marginTop: 12,
+    },
+    readingSummaryMetaTile: {
+      flexGrow: 1,
+      flexBasis: '48%',
+      minWidth: 132,
+      borderRadius: 12,
+      borderWidth: 1,
+      borderColor: palette.line,
+      backgroundColor: isDark ? '#102131' : '#F7FBFF',
+      padding: 9,
+    },
+    readingSummaryMetaLabel: {
+      color: palette.ink500,
+      fontSize: 9,
+      fontWeight: '900',
+      textTransform: 'uppercase',
+      letterSpacing: 0.3,
+    },
+    readingSummaryMetaValue: {
+      marginTop: 4,
+      color: palette.ink900,
+      fontSize: 11,
+      fontWeight: '800',
+    },
+    readingSummaryScroll: {
+      marginTop: 12,
+    },
+    readingSummaryList: {
+      gap: 8,
+      paddingBottom: 4,
+    },
+    readingSummaryRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      gap: 10,
+      borderRadius: 12,
+      borderWidth: 1,
+      borderColor: palette.line,
+      backgroundColor: isDark ? palette.mist : '#FAFDFF',
+      paddingHorizontal: 10,
+      paddingVertical: 9,
+    },
+    readingSummaryLabel: {
+      flex: 1,
+      color: palette.ink700,
+      fontSize: 11,
+      fontWeight: '800',
+    },
+    readingSummaryValue: {
+      flexShrink: 1,
+      color: palette.ink900,
+      fontSize: 12,
+      fontWeight: '900',
+      textAlign: 'right',
+    },
+    readingSummaryRemarks: {
+      borderRadius: 12,
+      borderWidth: 1,
+      borderColor: palette.line,
+      backgroundColor: isDark ? '#102131' : '#F7FBFF',
+      padding: 10,
+    },
+    readingSummaryRemarksText: {
+      marginTop: 5,
+      color: palette.ink900,
+      fontSize: 11,
+      lineHeight: 16,
+      fontWeight: '700',
+    },
   }, responsiveMetrics, {
     exclude: [
       'tableColumn.width',
@@ -2080,6 +2380,12 @@ function createStyles(palette, isDark, responsiveMetrics = getResponsiveMetrics(
       'modalBackdrop.flex',
       'detailModal.maxHeight',
       'tableCell.flex',
+      'readingSummaryOverlay.flex',
+      'readingSummarySheet.maxHeight',
+      'readingSummaryTitleWrap.flex',
+      'readingSummaryMetaTile.flexBasis',
+      'readingSummaryMetaTile.flexGrow',
+      'readingSummaryLabel.flex',
     ],
   }));
 }
