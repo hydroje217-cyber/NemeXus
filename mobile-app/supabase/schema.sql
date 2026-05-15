@@ -563,6 +563,21 @@ for update
 using (public.current_role() in ('admin', 'supervisor', 'manager'))
 with check (public.current_role() in ('admin', 'supervisor', 'manager'));
 
+drop policy if exists "approved users can update own chlorination readings" on public.chlorination_readings;
+create policy "approved users can update own chlorination readings"
+on public.chlorination_readings
+for update
+using (
+  submitted_by = auth.uid()
+  and auth.uid() is not null
+  and public.is_approved_user()
+)
+with check (
+  submitted_by = auth.uid()
+  and auth.uid() is not null
+  and public.is_approved_user()
+);
+
 drop policy if exists "approved users can read deepwell readings" on public.deepwell_readings;
 create policy "approved users can read deepwell readings"
 on public.deepwell_readings
@@ -588,6 +603,21 @@ on public.deepwell_readings
 for update
 using (public.current_role() in ('admin', 'supervisor', 'manager'))
 with check (public.current_role() in ('admin', 'supervisor', 'manager'));
+
+drop policy if exists "approved users can update own deepwell readings" on public.deepwell_readings;
+create policy "approved users can update own deepwell readings"
+on public.deepwell_readings
+for update
+using (
+  submitted_by = auth.uid()
+  and auth.uid() is not null
+  and public.is_approved_user()
+)
+with check (
+  submitted_by = auth.uid()
+  and auth.uid() is not null
+  and public.is_approved_user()
+);
 
 drop policy if exists "approved users can read daily site summaries" on public.daily_site_summaries;
 create policy "approved users can read daily site summaries"

@@ -16,15 +16,21 @@ export default function ScreenShell({
   title,
   subtitle,
   statusChips = [],
+  headerActionIcon,
+  headerActionLabel,
+  onHeaderActionPress,
   showMenuButton = false,
   hideThemeToggle = false,
   children,
   scroll = true,
-  stickyHeader = false,
   keyboardAware = false,
   keyboardAwareProps,
   refreshing = false,
   onRefresh,
+  scrollRef,
+  onScroll,
+  scrollEventThrottle,
+  floatingOverlay,
 }) {
   const { profile, signOut } = useAuth();
   const { palette, isDark, toggleTheme } = useTheme();
@@ -82,85 +88,100 @@ export default function ScreenShell({
     />
   ) : undefined;
 
+  const header = (
+    <View style={styles.headerBody}>
+      {accountOpen ? (
+        <Pressable
+          accessibilityLabel="Close account details"
+          onPress={() => setAccountOpen(false)}
+          style={styles.accountDismissLayer}
+        />
+      ) : null}
+      <View style={styles.hero}>
+        <View style={styles.heroTopRow}>
+          <View style={styles.heroIdentityGroup}>
+            {headerActionIcon && onHeaderActionPress ? (
+              <Pressable
+                onPress={onHeaderActionPress}
+                accessibilityRole="button"
+                accessibilityLabel={headerActionLabel || 'Header action'}
+                style={({ pressed }) => [styles.headerActionButton, pressed && styles.menuButtonPressed]}
+              >
+                <Ionicons name={headerActionIcon} size={18} color={palette.cyan300} />
+              </Pressable>
+            ) : null}
+            <View style={styles.heroCopy}>
+              {eyebrow ? <Text numberOfLines={1} style={styles.eyebrow}>{eyebrow}</Text> : null}
+              <Text numberOfLines={1} style={styles.title}>{title}</Text>
+              {subtitle ? <Text style={styles.subtitle}>{subtitle}</Text> : null}
+            </View>
+          </View>
+          {renderStatusChips(styles.statusChipRowHeader)}
+          {showMenuButton ? (
+            <View style={styles.accountControlWrap}>
+              <Pressable
+                onPress={(event) => {
+                  event.stopPropagation?.();
+                  setAccountOpen((current) => !current);
+                }}
+                accessibilityLabel={accountOpen ? 'Close account details' : 'Open account details'}
+                style={({ pressed }) => [styles.accountIconButton, accountOpen && styles.accountIconButtonOpen, pressed && styles.menuButtonPressed]}
+              >
+                <Ionicons name="person-circle-outline" size={20} color={palette.cyan300} />
+              </Pressable>
+              {accountOpen ? (
+                <View
+                  style={styles.accountDropdown}
+                  onStartShouldSetResponder={() => true}
+                >
+                  <View style={styles.accountMenuTop}>
+                    <View style={styles.accountAvatar}>
+                      <Ionicons name="person-circle-outline" size={18} color={palette.cyan300} />
+                    </View>
+                    <View style={styles.accountCopy}>
+                      <Text style={styles.accountEyebrow}>User details</Text>
+                      <Text numberOfLines={1} style={styles.accountName}>{profile?.full_name || profile?.email || 'Office user'}</Text>
+                      <Text numberOfLines={1} style={styles.accountEmail}>{profile?.email || '-'}</Text>
+                    </View>
+                  </View>
+                  <View style={styles.accountMenuBottom}>
+                    <View style={styles.accountRolePill}>
+                      <Text style={styles.accountRoleText}>{profile?.role || 'user'}</Text>
+                    </View>
+                  </View>
+                  {!hideThemeToggle ? (
+                    <PressableThemeToggle
+                      isDark={isDark}
+                      palette={palette}
+                      onPress={toggleTheme}
+                      styles={styles}
+                      menuItem
+                    />
+                  ) : null}
+                  <Pressable onPress={signOut} style={({ pressed }) => [styles.accountSignOut, pressed && styles.menuButtonPressed]}>
+                    <Ionicons name="log-out-outline" size={13} color={palette.amber500} />
+                    <Text style={styles.accountSignOutText}>Sign out</Text>
+                  </Pressable>
+                </View>
+              ) : null}
+            </View>
+          ) : !hideThemeToggle ? (
+            <PressableThemeToggle
+              isDark={isDark}
+              palette={palette}
+              onPress={toggleTheme}
+              styles={styles}
+            />
+          ) : null}
+        </View>
+        {renderStatusChips(styles.statusChipRowBelow)}
+      </View>
+    </View>
+  );
+
   const content = (
     <KeyboardScrollContext.Provider value={keyboardController}>
       <View style={styles.body}>
-        {accountOpen ? (
-          <Pressable
-            accessibilityLabel="Close account details"
-            onPress={() => setAccountOpen(false)}
-            style={styles.accountDismissLayer}
-          />
-        ) : null}
-        <View style={[styles.hero, stickyHeader && Platform.OS === 'web' && styles.heroSticky]}>
-          <View style={styles.heroTopRow}>
-            <View style={styles.heroIdentityGroup}>
-              <View style={styles.heroCopy}>
-                {eyebrow ? <Text numberOfLines={1} style={styles.eyebrow}>{eyebrow}</Text> : null}
-                <Text numberOfLines={1} style={styles.title}>{title}</Text>
-                {subtitle ? <Text style={styles.subtitle}>{subtitle}</Text> : null}
-              </View>
-            </View>
-            {renderStatusChips(styles.statusChipRowHeader)}
-            {showMenuButton ? (
-              <View style={styles.accountControlWrap}>
-                <Pressable
-                  onPress={(event) => {
-                    event.stopPropagation?.();
-                    setAccountOpen((current) => !current);
-                  }}
-                  accessibilityLabel={accountOpen ? 'Close account details' : 'Open account details'}
-                  style={({ pressed }) => [styles.accountIconButton, accountOpen && styles.accountIconButtonOpen, pressed && styles.menuButtonPressed]}
-                >
-                  <Ionicons name="person-outline" size={16} color={palette.cyan300} />
-                </Pressable>
-                {accountOpen ? (
-                  <View
-                    style={styles.accountDropdown}
-                    onStartShouldSetResponder={() => true}
-                  >
-                    <View style={styles.accountMenuTop}>
-                      <View style={styles.accountAvatar}>
-                        <Ionicons name="person-outline" size={16} color={palette.cyan300} />
-                      </View>
-                      <View style={styles.accountCopy}>
-                        <Text style={styles.accountEyebrow}>Office account</Text>
-                        <Text numberOfLines={1} style={styles.accountName}>{profile?.full_name || profile?.email || 'Office user'}</Text>
-                        <Text numberOfLines={1} style={styles.accountEmail}>{profile?.email || '-'}</Text>
-                      </View>
-                    </View>
-                    <View style={styles.accountMenuBottom}>
-                      <View style={styles.accountRolePill}>
-                        <Text style={styles.accountRoleText}>{profile?.role || 'user'}</Text>
-                      </View>
-                    </View>
-                    {!hideThemeToggle ? (
-                      <PressableThemeToggle
-                        isDark={isDark}
-                        palette={palette}
-                        onPress={toggleTheme}
-                        styles={styles}
-                        menuItem
-                      />
-                    ) : null}
-                      <Pressable onPress={signOut} style={({ pressed }) => [styles.accountSignOut, pressed && styles.menuButtonPressed]}>
-                        <Ionicons name="log-out-outline" size={13} color={palette.amber500} />
-                        <Text style={styles.accountSignOutText}>Sign out</Text>
-                      </Pressable>
-                  </View>
-                ) : null}
-              </View>
-            ) : !hideThemeToggle ? (
-              <PressableThemeToggle
-                isDark={isDark}
-                palette={palette}
-                onPress={toggleTheme}
-                styles={styles}
-              />
-            ) : null}
-          </View>
-          {renderStatusChips(styles.statusChipRowBelow)}
-        </View>
         <Pressable
           disabled={!accountOpen}
           onPress={() => setAccountOpen(false)}
@@ -173,43 +194,69 @@ export default function ScreenShell({
   );
 
   if (!scroll) {
-    return <View style={styles.container}>{content}</View>;
+    return (
+      <View style={styles.container}>
+        {header}
+        {content}
+        {floatingOverlay}
+      </View>
+    );
   }
 
   if (keyboardAware && Platform.OS !== 'web') {
     return (
-      <KeyboardAwareScrollView
-        style={styles.container}
-        contentContainerStyle={styles.scrollContent}
-        keyboardShouldPersistTaps="handled"
-        keyboardDismissMode="on-drag"
-        enableOnAndroid
-        enableAutomaticScroll
-        extraScrollHeight={72}
-        extraHeight={96}
-        keyboardOpeningTime={0}
-        refreshControl={refreshControl}
-        innerRef={(ref) => {
-          keyboardScrollRef.current = ref;
-          keyboardAwareProps?.innerRef?.(ref);
-        }}
-        {...keyboardAwareProps}
-      >
-        {content}
-      </KeyboardAwareScrollView>
+      <View style={styles.container}>
+        <KeyboardAwareScrollView
+          style={styles.scroller}
+          contentContainerStyle={styles.scrollContent}
+          stickyHeaderIndices={[0]}
+          keyboardShouldPersistTaps="handled"
+          keyboardDismissMode="on-drag"
+          enableOnAndroid
+          enableAutomaticScroll
+          extraScrollHeight={72}
+          extraHeight={96}
+          keyboardOpeningTime={0}
+          refreshControl={refreshControl}
+          onScroll={onScroll}
+          scrollEventThrottle={scrollEventThrottle}
+          innerRef={(ref) => {
+            keyboardScrollRef.current = ref;
+            if (typeof scrollRef === 'function') {
+              scrollRef(ref);
+            } else if (scrollRef) {
+              scrollRef.current = ref;
+            }
+            keyboardAwareProps?.innerRef?.(ref);
+          }}
+          {...keyboardAwareProps}
+        >
+          {header}
+          {content}
+        </KeyboardAwareScrollView>
+        {floatingOverlay}
+      </View>
     );
   }
 
   return (
-    <ScrollView
-      style={styles.container}
-      contentContainerStyle={styles.scrollContent}
-      keyboardShouldPersistTaps="handled"
-      keyboardDismissMode="on-drag"
-      refreshControl={refreshControl}
-    >
-      {content}
-    </ScrollView>
+    <View style={styles.container}>
+      <ScrollView
+        ref={scrollRef}
+        style={styles.scroller}
+        contentContainerStyle={styles.scrollContent}
+        stickyHeaderIndices={[0]}
+        keyboardShouldPersistTaps="handled"
+        keyboardDismissMode="on-drag"
+        refreshControl={refreshControl}
+        onScroll={onScroll}
+        scrollEventThrottle={scrollEventThrottle}
+      >
+        {header}
+        {content}
+      </ScrollView>
+      {floatingOverlay}
+    </View>
   );
 }
 
@@ -245,6 +292,10 @@ function createStyles(palette, isDark, metrics) {
       flex: 1,
       backgroundColor: palette.canvas,
     },
+    scroller: {
+      flex: 1,
+      backgroundColor: palette.canvas,
+    },
     scrollContent: {
       flexGrow: 1,
     },
@@ -253,6 +304,14 @@ function createStyles(palette, isDark, metrics) {
       width: '100%',
       maxWidth: metrics.contentMaxWidth,
       alignSelf: 'center',
+    },
+    headerBody: {
+      width: '100%',
+      maxWidth: metrics.contentMaxWidth,
+      alignSelf: 'center',
+      flexShrink: 0,
+      zIndex: 2000,
+      elevation: 2000,
     },
     hero: {
       paddingTop: 10,
@@ -264,10 +323,6 @@ function createStyles(palette, isDark, metrics) {
       overflow: 'visible',
       zIndex: 300,
       elevation: 300,
-    },
-    heroSticky: {
-      position: 'sticky',
-      top: 0,
     },
     accountDismissLayer: {
       position: 'absolute',
@@ -301,6 +356,16 @@ function createStyles(palette, isDark, metrics) {
     heroCopy: {
       flexShrink: 1,
       minWidth: 0,
+    },
+    headerActionButton: {
+      width: 34,
+      height: 34,
+      alignItems: 'center',
+      justifyContent: 'center',
+      borderWidth: 1,
+      borderColor: isDark ? '#294C68' : 'rgba(191,212,231,0.8)',
+      backgroundColor: isDark ? '#0C1824' : 'rgba(248,252,255,0.08)',
+      borderRadius: 10,
     },
     eyebrow: {
       color: palette.cyan300,
@@ -499,6 +564,20 @@ function createStyles(palette, isDark, metrics) {
       flex: 1,
     },
   }, metrics, {
-    exclude: ['body.width', 'body.maxWidth', 'body.alignSelf', 'content.padding', 'content.gap', 'hero.paddingHorizontal', 'contentDismissWrap.flex'],
+    exclude: [
+      'body.width',
+      'body.maxWidth',
+      'body.alignSelf',
+      'headerBody.width',
+      'headerBody.maxWidth',
+      'headerBody.alignSelf',
+      'headerBody.flexShrink',
+      'headerBody.zIndex',
+      'headerBody.elevation',
+      'content.padding',
+      'content.gap',
+      'hero.paddingHorizontal',
+      'contentDismissWrap.flex',
+    ],
   }));
 }

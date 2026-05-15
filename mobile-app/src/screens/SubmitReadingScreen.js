@@ -14,12 +14,15 @@ import {
   isLikelyOfflineError,
   syncOfflineReadings,
 } from '../services/offlineReadings';
-import { createReading, getLatestReadingForSite, getReadingForSlot } from '../services/readings';
+import { clearReadingDraft, loadReadingDraft, saveReadingDraft } from '../services/readingDrafts';
+import { createReading, getLatestReadingForSite, getReadingForSlot, updateReading } from '../services/readings';
 import { parseNullableNumber } from '../utils/readings';
 import { getResponsiveMetrics, scaleStyleDefinitions } from '../theme';
 import { isShiftBatchEntryWindow, nextShiftBatchEntryText, shiftNameForSlot } from '../utils/shiftSchedule';
 import { formatTimestamp, roundDownTo30MinSlot } from '../utils/time';
 import LottieView from 'lottie-react-native';
+
+const EDIT_WINDOW_MS = 5 * 60 * 1000;
 
 const CHLORINATION_BASE_FIELDS = [
   'pressure',
@@ -100,7 +103,55 @@ const initialDeepwellState = {
   powerKwhShift: '',
 };
 
-export default function SubmitReadingScreen({ navigation, site }) {
+function formValue(value) {
+  return value === null || value === undefined ? '' : String(value);
+}
+
+function buildEditFormState(reading) {
+  return {
+    remarks: reading?.remarks || '',
+    chlorination: {
+      totalizer: formValue(reading?.totalizer),
+      pressure: formValue(reading?.pressure_psi),
+      rc: formValue(reading?.rc_ppm),
+      turbidity: formValue(reading?.turbidity_ntu),
+      ph: formValue(reading?.ph),
+      tds: formValue(reading?.tds_ppm),
+      tankLevel: formValue(reading?.tank_level_liters),
+      flowrate: formValue(reading?.flowrate_m3hr),
+      chlorineConsumed: formValue(reading?.chlorine_consumed),
+      peroxideConsumption: formValue(reading?.peroxide_consumption),
+      powerConsumptionKwh: formValue(reading?.chlorination_power_kwh),
+    },
+    deepwell: {
+      upstreamPressure: formValue(reading?.upstream_pressure_psi),
+      downstreamPressure: formValue(reading?.downstream_pressure_psi),
+      flowrate: formValue(reading?.flowrate_m3hr),
+      vfdHz: formValue(reading?.vfd_frequency_hz),
+      voltL1: formValue(reading?.voltage_l1_v),
+      voltL2: formValue(reading?.voltage_l2_v),
+      voltL3: formValue(reading?.voltage_l3_v),
+      amperage: formValue(reading?.amperage_a),
+      tds: formValue(reading?.tds_ppm),
+      powerKwhShift: formValue(reading?.power_kwh_shift),
+    },
+  };
+}
+
+function isReadingEditWindowOpen(reading, now = new Date()) {
+  if (!reading?.created_at) {
+    return false;
+  }
+
+  const savedTime = new Date(reading.created_at).getTime();
+  if (!Number.isFinite(savedTime)) {
+    return false;
+  }
+
+  return now.getTime() - savedTime < EDIT_WINDOW_MS;
+}
+
+export default function SubmitReadingScreen({ navigation, site, editingReading, editReturnParams }) {
   const { profile } = useAuth();
   const { palette, isDark } = useTheme();
   const { width } = useWindowDimensions();
@@ -129,16 +180,29 @@ export default function SubmitReadingScreen({ navigation, site }) {
   const [duplicateReading, setDuplicateReading] = useState(null);
   const [latestReading, setLatestReading] = useState(null);
   const [pendingSubmission, setPendingSubmission] = useState(null);
+  const [draftReady, setDraftReady] = useState(false);
+  const [editNow, setEditNow] = useState(() => new Date());
 
+  const isEditingReading = Boolean(editingReading?.id);
+  const editingSlotDate = useMemo(() => {
+    if (!editingReading?.slot_datetime) {
+      return null;
+    }
+
+    const parsed = new Date(editingReading.slot_datetime);
+    return Number.isNaN(parsed.getTime()) ? null : parsed;
+  }, [editingReading?.slot_datetime]);
+  const formSlot = isEditingReading && editingSlotDate ? editingSlotDate : currentSlot;
+  const editWindowOpen = !isEditingReading || isReadingEditWindowOpen(editingReading, editNow);
   const isChlorination = site?.type === 'CHLORINATION';
   const isDeepwell = site?.type === 'DEEPWELL';
   const parameterCount = isChlorination ? 11 : isDeepwell ? 10 : 0;
-  const shiftBatchEnabled = isShiftBatchEntryWindow(currentSlot);
-  const nextShiftBatchReadingText = nextShiftBatchEntryText(currentSlot);
+  const shiftBatchEnabled = isShiftBatchEntryWindow(formSlot);
+  const nextShiftBatchReadingText = nextShiftBatchEntryText(formSlot);
   const shiftBatchNoticeText = shiftBatchEnabled
     ? 'Open for this shift.'
     : 'Shift usage fields open during the hour before shift turnover.';
-  const currentShiftLabel = shiftNameForSlot(currentSlot);
+  const currentShiftLabel = shiftNameForSlot(formSlot);
   const completionProgress = useMemo(() => {
     const activeFields = isChlorination
       ? [
@@ -163,8 +227,80 @@ export default function SubmitReadingScreen({ navigation, site }) {
   }, []);
 
   useEffect(() => {
-    refreshSlotStatus(currentSlot);
-  }, [currentSlot, site?.id, site?.type]);
+    let mounted = true;
+    setDraftReady(false);
+
+    async function restoreDraft() {
+      if (isEditingReading) {
+        const editState = buildEditFormState(editingReading);
+
+        setChlorination({ ...initialChlorinationState, ...editState.chlorination });
+        setDeepwell({ ...initialDeepwellState, ...editState.deepwell });
+        setRemarks(editState.remarks);
+        setResultTone(editWindowOpen ? 'info' : 'error');
+        setResultMessage(
+          editWindowOpen
+            ? `Editing saved reading for slot ${formatTimestamp(editingSlotDate)}.`
+            : 'This reading is past the 5-minute edit window, so editing is locked.'
+        );
+        setDraftReady(true);
+        return;
+      }
+
+      const draft = await loadReadingDraft(site);
+      if (!mounted) {
+        return;
+      }
+
+      setChlorination({ ...initialChlorinationState, ...(draft?.chlorination || {}) });
+      setDeepwell({ ...initialDeepwellState, ...(draft?.deepwell || {}) });
+      setRemarks(typeof draft?.remarks === 'string' ? draft.remarks : '');
+
+      if (draft?.saved_at) {
+        setResultTone('info');
+        setResultMessage(`Restored unsaved draft from ${formatTimestamp(new Date(draft.saved_at))}.`);
+      }
+
+      setDraftReady(true);
+    }
+
+    restoreDraft();
+
+    return () => {
+      mounted = false;
+    };
+  }, [editWindowOpen, editingReading, editingSlotDate, isEditingReading, site?.id, site?.type]);
+
+  useEffect(() => {
+    if (isEditingReading || !draftReady || !site?.id || !site?.type) {
+      return;
+    }
+
+    const timeoutId = setTimeout(() => {
+      const hasDraftContent = [
+        remarks,
+        ...Object.values(chlorination),
+        ...Object.values(deepwell),
+      ].some((value) => String(value ?? '').trim());
+
+      if (!hasDraftContent) {
+        clearReadingDraft(site);
+        return;
+      }
+
+      saveReadingDraft(site, {
+        remarks,
+        chlorination,
+        deepwell,
+      });
+    }, 350);
+
+    return () => clearTimeout(timeoutId);
+  }, [chlorination, deepwell, draftReady, isEditingReading, remarks, site?.id, site?.type]);
+
+  useEffect(() => {
+    refreshSlotStatus(formSlot);
+  }, [editingReading?.id, formSlot, site?.id, site?.type]);
 
   useEffect(() => {
     const intervalId = setInterval(() => {
@@ -173,6 +309,18 @@ export default function SubmitReadingScreen({ navigation, site }) {
 
     return () => clearInterval(intervalId);
   }, []);
+
+  useEffect(() => {
+    if (!isEditingReading) {
+      return undefined;
+    }
+
+    const intervalId = setInterval(() => {
+      setEditNow(new Date());
+    }, 1000);
+
+    return () => clearInterval(intervalId);
+  }, [isEditingReading]);
 
   useEffect(() => {
     if (shiftBatchEnabled) {
@@ -204,7 +352,7 @@ export default function SubmitReadingScreen({ navigation, site }) {
     });
   }, [shiftBatchEnabled]);
 
-  const slotPreview = useMemo(() => formatTimestamp(currentSlot), [currentSlot]);
+  const slotPreview = useMemo(() => formatTimestamp(formSlot), [formSlot]);
 
   const deltaPressure = useMemo(() => {
     const up = parseNullableNumber(deepwell.upstreamPressure);
@@ -307,6 +455,38 @@ export default function SubmitReadingScreen({ navigation, site }) {
     setChlorination(initialChlorinationState);
     setDeepwell(initialDeepwellState);
     setInvalidFields(new Set());
+    await clearReadingDraft(site);
+  }
+
+  function getReadingAnomalies(payload) {
+    const anomalies = [];
+
+    function addRange(value, label, min, max, unit = '') {
+      const parsed = Number(value);
+      if (!Number.isFinite(parsed)) {
+        return;
+      }
+
+      if (parsed < min || parsed > max) {
+        anomalies.push(`${label} ${parsed}${unit} is outside ${min}-${max}${unit}`);
+      }
+    }
+
+    if (payload.site_type === 'CHLORINATION') {
+      addRange(payload.ph, 'pH', 6.5, 8.5);
+      addRange(payload.rc_ppm, 'Residual chlorine', 0.2, 2, ' ppm');
+      addRange(payload.turbidity_ntu, 'Turbidity', 0, 5, ' NTU');
+      addRange(payload.pressure_psi, 'Pressure', 15, 100, ' psi');
+      addRange(payload.tds_ppm, 'TDS', 0, 500, ' ppm');
+    }
+
+    if (payload.site_type === 'DEEPWELL') {
+      addRange(payload.upstream_pressure_psi, 'Upstream pressure', 15, 120, ' psi');
+      addRange(payload.downstream_pressure_psi, 'Downstream pressure', 15, 120, ' psi');
+      addRange(payload.tds_ppm, 'TDS', 0, 500, ' ppm');
+    }
+
+    return anomalies;
   }
 
   async function handleSyncOfflineReadings() {
@@ -366,7 +546,7 @@ export default function SubmitReadingScreen({ navigation, site }) {
         }),
       ]);
 
-      setDuplicateReading(duplicate);
+      setDuplicateReading(duplicate?.id === editingReading?.id ? null : duplicate);
       setLatestReading(latest);
     } catch (error) {
       if (!isLikelyOfflineError(error)) {
@@ -463,20 +643,27 @@ export default function SubmitReadingScreen({ navigation, site }) {
 
   function buildSubmissionPayload() {
     const actualNow = new Date();
-    const slotDate = roundDownTo30MinSlot(actualNow);
+    const slotDate = isEditingReading && editingSlotDate ? editingSlotDate : roundDownTo30MinSlot(actualNow);
     const slotText = formatTimestamp(slotDate);
     const isSubmitShiftBatchSlot = isShiftBatchEntryWindow(slotDate);
 
+    if (isEditingReading && !editWindowOpen) {
+      setResultTone('error');
+      setResultMessage('This reading is past the 5-minute edit window, so editing is locked.');
+      scrollToResultMessage();
+      return null;
+    }
+
     const payload = {
       site_id: site?.id,
-      submitted_by: profile?.id,
+      submitted_by: isEditingReading ? editingReading?.submitted_by || profile?.id : profile?.id,
       site_type: site?.type,
       reading_datetime: actualNow.toISOString(),
       slot_datetime: slotDate.toISOString(),
     };
 
-    if (remarks.trim()) {
-      payload.remarks = remarks.trim();
+    if (remarks.trim() || isEditingReading) {
+      payload.remarks = remarks.trim() || null;
     }
 
     if (isChlorination) {
@@ -538,9 +725,9 @@ export default function SubmitReadingScreen({ navigation, site }) {
       if (tankLevel !== null) payload.tank_level_liters = tankLevel;
       if (flowrate !== null) payload.flowrate_m3hr = flowrate;
       if (isSubmitShiftBatchSlot) {
-        if (chlorineConsumed !== null) payload.chlorine_consumed = chlorineConsumed;
-        if (peroxideConsumption !== null) payload.peroxide_consumption = peroxideConsumption;
-        if (powerConsumptionKwh !== null) payload.chlorination_power_kwh = powerConsumptionKwh;
+        if (chlorineConsumed !== null || isEditingReading) payload.chlorine_consumed = chlorineConsumed;
+        if (peroxideConsumption !== null || isEditingReading) payload.peroxide_consumption = peroxideConsumption;
+        if (powerConsumptionKwh !== null || isEditingReading) payload.chlorination_power_kwh = powerConsumptionKwh;
       }
     }
 
@@ -622,6 +809,11 @@ export default function SubmitReadingScreen({ navigation, site }) {
       });
 
       if (duplicate) {
+        if (isEditingReading && duplicate.id === editingReading?.id) {
+          setPendingSubmission(submission);
+          return;
+        }
+
         setDuplicateReading(duplicate);
         setResultTone('error');
         setResultMessage(
@@ -658,7 +850,7 @@ export default function SubmitReadingScreen({ navigation, site }) {
         slotIso: payload.slot_datetime,
       });
 
-      if (duplicate) {
+      if (duplicate && (!isEditingReading || duplicate.id !== editingReading?.id)) {
         setDuplicateReading(duplicate);
         setResultTone('error');
         setResultMessage(`A reading already exists for slot ${slotText}. Saved by ${readingOperatorName(duplicate)}.`);
@@ -666,15 +858,34 @@ export default function SubmitReadingScreen({ navigation, site }) {
         return;
       }
 
-      await createReading(payload);
+      if (isEditingReading) {
+        await updateReading(editingReading.id, payload);
+      } else {
+        await createReading(payload);
+      }
       setShowSuccessAnim(true);
       setResultTone('success');
-      setResultMessage(`Reading saved successfully. Saved under slot ${slotText}.`);
+      const anomalies = getReadingAnomalies(payload);
+      setResultMessage(
+        `Reading ${isEditingReading ? 'updated' : 'saved'} successfully. Saved under slot ${slotText}.${
+          anomalies.length ? ` Check these unusual value(s): ${anomalies.join('; ')}.` : ''
+        }`
+      );
       scrollToResultMessage();
       await clearForm();
       await refreshSlotStatus(slotDate);
+      if (isEditingReading) {
+        navigation.navigate('reading-history', editReturnParams || { site });
+      }
     } catch (error) {
       if (isLikelyOfflineError(error)) {
+        if (isEditingReading) {
+          setResultTone('error');
+          setResultMessage('Connection is required to edit a saved reading. Try again when the device is online.');
+          scrollToResultMessage();
+          return;
+        }
+
         const offlineSave = await enqueueOfflineReading(payload, {
           site_name: site?.name || 'Unknown site',
           site_type: site?.type || 'Unknown type',
@@ -691,7 +902,12 @@ export default function SubmitReadingScreen({ navigation, site }) {
         }
 
         setResultTone('success');
-        setResultMessage(`No connection detected. Reading saved offline for slot ${slotText}. Sync it when the connection returns.`);
+        const anomalies = getReadingAnomalies(payload);
+        setResultMessage(
+          `No connection detected. Reading saved offline for slot ${slotText}. Sync it when the connection returns.${
+            anomalies.length ? ` Check these unusual value(s): ${anomalies.join('; ')}.` : ''
+          }`
+        );
         scrollToResultMessage();
         await clearForm();
         return;
@@ -758,8 +974,8 @@ export default function SubmitReadingScreen({ navigation, site }) {
                 <Ionicons name="clipboard-outline" size={20} color={palette.ink900} />
               </View>
               <View style={styles.confirmCopy}>
-                <Text style={styles.confirmTitle}>Confirm reading</Text>
-                <Text style={styles.confirmBody}>Review the summary before saving this slot.</Text>
+                <Text style={styles.confirmTitle}>{isEditingReading ? 'Confirm edit' : 'Confirm reading'}</Text>
+                <Text style={styles.confirmBody}>Review the summary before {isEditingReading ? 'updating' : 'saving'} this slot.</Text>
               </View>
             </View>
 
@@ -793,7 +1009,7 @@ export default function SubmitReadingScreen({ navigation, site }) {
                 icon={<Ionicons name="create-outline" size={16} color={palette.ink900} />}
               />
               <PrimaryButton
-                label="Confirm save"
+                label={isEditingReading ? 'Confirm update' : 'Confirm save'}
                 onPress={handleConfirmSubmit}
                 icon={<Ionicons name="checkmark-outline" size={16} color={palette.onAccent} />}
               />
@@ -804,10 +1020,14 @@ export default function SubmitReadingScreen({ navigation, site }) {
 
       <ScreenShell
         eyebrow="Reading form"
-        title="Submit reading"
+        title={isEditingReading ? 'Edit reading' : 'Submit reading'}
         subtitle={`${site?.name || 'Unknown site'} (${site?.type || 'Unknown type'}) - ${
           profile?.full_name || profile?.email || 'Unknown operator'
         }`}
+        headerActionIcon="arrow-back-outline"
+        headerActionLabel="Back to site selection"
+        onHeaderActionPress={navigation.goBack}
+        showMenuButton
         keyboardAware
         keyboardAwareProps={{
           keyboardOpeningTime: 0,
@@ -826,7 +1046,7 @@ export default function SubmitReadingScreen({ navigation, site }) {
               />
             </View>
             <View style={styles.contextCopy}>
-              <Text style={styles.contextLabel}>Current slot preview</Text>
+              <Text style={styles.contextLabel}>{isEditingReading ? 'Editing slot' : 'Current slot preview'}</Text>
               <Text style={styles.slotValue}>{slotPreview}</Text>
               <Text style={styles.contextMeta}>Submitted by {profile?.full_name || profile?.email || '-'}</Text>
             </View>
@@ -855,7 +1075,11 @@ export default function SubmitReadingScreen({ navigation, site }) {
       
         <MessageBanner tone={resultTone}>{resultMessage}</MessageBanner>
 
-        {duplicateReading ? (
+        {isEditingReading && !editWindowOpen ? (
+          <MessageBanner tone="error">
+            Edit is available only within 5 minutes after the reading is saved.
+          </MessageBanner>
+        ) : duplicateReading ? (
           <MessageBanner tone="error">
             This slot is already saved by {readingOperatorName(duplicateReading)}. Submit is locked for this slot.
           </MessageBanner>
@@ -1229,12 +1453,6 @@ export default function SubmitReadingScreen({ navigation, site }) {
 
         <View style={styles.actions}>
           <PrimaryButton
-            label="Back"
-            onPress={navigation.goBack}
-            tone="secondary"
-            icon={<Ionicons name="arrow-back-outline" size={16} color={palette.ink900} />}
-          />
-          <PrimaryButton
             label={
               submitting
                 ? 'Submitting...'
@@ -1242,11 +1460,13 @@ export default function SubmitReadingScreen({ navigation, site }) {
                   ? 'Checking slot...'
                   : duplicateReading
                     ? 'Slot already saved'
-                    : 'Review and submit'
+                    : isEditingReading
+                      ? 'Review and update'
+                      : 'Review and submit'
             }
             onPress={handleSubmit}
             loading={submitting}
-            disabled={slotStatusLoading || Boolean(duplicateReading)}
+            disabled={slotStatusLoading || Boolean(duplicateReading) || (isEditingReading && !editWindowOpen)}
             icon={<Ionicons name="save-outline" size={16} color={palette.onAccent} />}
           />
         </View>

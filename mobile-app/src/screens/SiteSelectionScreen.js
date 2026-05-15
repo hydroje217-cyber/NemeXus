@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { ActivityIndicator, Pressable, StyleSheet, Text, View, useWindowDimensions } from 'react-native';
+import { Pressable, StyleSheet, Text, View, useWindowDimensions } from 'react-native';
 import Ionicons from '@expo/vector-icons/Ionicons';
 import Card from '../components/Card';
 import MessageBanner from '../components/MessageBanner';
@@ -9,7 +9,10 @@ import { useAuth } from '../context/AuthContext';
 import { useTheme } from '../context/ThemeContext';
 import { getResponsiveMetrics, scaleStyleDefinitions } from '../theme';
 import { getOfflineReadingCount, syncOfflineReadings } from '../services/offlineReadings';
+import { getReadingForSlot, listReadings } from '../services/readings';
 import { listAccessibleSites } from '../services/sites';
+import { shiftNameForSlot } from '../utils/shiftSchedule';
+import { formatTimestamp, roundDownTo30MinSlot } from '../utils/time';
 
 function getSiteDescription(type) {
   return type === 'CHLORINATION'
@@ -17,8 +20,82 @@ function getSiteDescription(type) {
     : 'Pressure, flow, power, and electrical monitoring for the pump station.';
 }
 
-export default function SiteSelectionScreen({ navigation }) {
-  const { profile, signOut } = useAuth();
+function formatDateValue(date) {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+}
+
+function readingOperatorName(reading) {
+  return reading?.submitted_profile?.full_name || reading?.submitted_profile?.email || 'another operator';
+}
+
+function SkeletonBlock({ styles, style }) {
+  return <View style={[styles.skeletonBlock, style]} />;
+}
+
+function CheckpointSkeleton({ styles }) {
+  return (
+    <View style={styles.pendingCheckpointStack}>
+      {[0, 1].map((item) => (
+        <Card key={item} style={[styles.checkpointCard, styles.skeletonCard]}>
+          <View style={styles.checkpointHeader}>
+            <SkeletonBlock styles={styles} style={styles.skeletonIcon} />
+            <View style={styles.checkpointCopy}>
+              <View style={styles.checkpointTitleRow}>
+                <SkeletonBlock styles={styles} style={styles.skeletonTitleLine} />
+                <SkeletonBlock styles={styles} style={styles.skeletonBadge} />
+              </View>
+              <SkeletonBlock styles={styles} style={styles.skeletonBodyLine} />
+              <SkeletonBlock styles={styles} style={styles.skeletonShortLine} />
+            </View>
+          </View>
+        </Card>
+      ))}
+    </View>
+  );
+}
+
+function StatusStripSkeleton({ styles }) {
+  return (
+    <Card style={styles.statusStripCard}>
+      {[0, 1, 2].map((item) => (
+        <View key={item} style={styles.statusStripItem}>
+          <SkeletonBlock styles={styles} style={styles.skeletonTinyLine} />
+          <SkeletonBlock styles={styles} style={styles.skeletonValueLine} />
+        </View>
+      ))}
+    </Card>
+  );
+}
+
+function SiteOptionsSkeleton({ styles }) {
+  return (
+    <View style={styles.options}>
+      {[0, 1].map((item) => (
+        <Card key={item} style={[styles.option, styles.skeletonCard]}>
+          <View style={styles.optionTopRow}>
+            <SkeletonBlock styles={styles} style={styles.skeletonSquareIcon} />
+            <View style={styles.optionCopy}>
+              <SkeletonBlock styles={styles} style={styles.skeletonOptionTitle} />
+              <SkeletonBlock styles={styles} style={styles.skeletonOptionBody} />
+              <SkeletonBlock styles={styles} style={styles.skeletonOptionBodyShort} />
+            </View>
+            <SkeletonBlock styles={styles} style={styles.skeletonBadgeWide} />
+          </View>
+          <View style={styles.optionMetaRow}>
+            <SkeletonBlock styles={styles} style={styles.skeletonPill} />
+            <SkeletonBlock styles={styles} style={styles.skeletonPillShort} />
+          </View>
+        </Card>
+      ))}
+    </View>
+  );
+}
+
+export default function SiteSelectionScreen({ navigation, onSelectedSiteChange }) {
+  const { profile } = useAuth();
   const { palette, isDark } = useTheme();
   const { width } = useWindowDimensions();
   const responsiveMetrics = useMemo(() => getResponsiveMetrics(width), [width]);
@@ -33,6 +110,27 @@ export default function SiteSelectionScreen({ navigation }) {
   const [message, setMessage] = useState('');
   const [offlineMessage, setOfflineMessage] = useState('');
   const [offlineTone, setOfflineTone] = useState('info');
+  const [currentSlot, setCurrentSlot] = useState(() => roundDownTo30MinSlot(new Date()));
+  const [currentSlotReading, setCurrentSlotReading] = useState(null);
+  const [currentSlotReadingsBySite, setCurrentSlotReadingsBySite] = useState({});
+  const [slotReadingsLoading, setSlotReadingsLoading] = useState(false);
+  const [checkpointSummary, setCheckpointSummary] = useState({
+    completed: 0,
+    missing: 0,
+    expected: 0,
+  });
+  const [checkpointLoading, setCheckpointLoading] = useState(false);
+  const [connectionOnline, setConnectionOnline] = useState(() => {
+    if (typeof navigator === 'undefined') {
+      return true;
+    }
+
+    return navigator.onLine !== false;
+  });
+  const pendingCurrentSlotSites = useMemo(
+    () => sites.filter((site) => !currentSlotReadingsBySite[String(site.id)]),
+    [currentSlotReadingsBySite, sites]
+  );
 
   useEffect(() => {
     let mounted = true;
@@ -72,6 +170,161 @@ export default function SiteSelectionScreen({ navigation }) {
       mounted = false;
     };
   }, []);
+
+  useEffect(() => {
+    onSelectedSiteChange?.(selectedSite);
+  }, [onSelectedSiteChange, selectedSite]);
+
+  useEffect(() => {
+    const intervalId = setInterval(() => {
+      setCurrentSlot(roundDownTo30MinSlot(new Date()));
+    }, 30000);
+
+    return () => clearInterval(intervalId);
+  }, []);
+
+  useEffect(() => {
+    if (
+      typeof window === 'undefined' ||
+      typeof window.addEventListener !== 'function' ||
+      typeof window.removeEventListener !== 'function'
+    ) {
+      return undefined;
+    }
+
+    function handleOnline() {
+      setConnectionOnline(true);
+    }
+
+    function handleOffline() {
+      setConnectionOnline(false);
+    }
+
+    window.addEventListener('online', handleOnline);
+    window.addEventListener('offline', handleOffline);
+
+    return () => {
+      window.removeEventListener('online', handleOnline);
+      window.removeEventListener('offline', handleOffline);
+    };
+  }, []);
+
+  useEffect(() => {
+    let mounted = true;
+
+    async function loadCurrentSlotBySite() {
+      if (!sites.length) {
+        setCurrentSlotReadingsBySite({});
+        return;
+      }
+
+      setSlotReadingsLoading(true);
+
+      try {
+        const rows = await Promise.all(
+          sites.map(async (site) => {
+            const reading = await getReadingForSlot({
+              siteId: site.id,
+              siteType: site.type,
+              slotIso: currentSlot.toISOString(),
+            });
+
+            return [String(site.id), reading];
+          })
+        );
+
+        if (!mounted) {
+          return;
+        }
+
+        setCurrentSlotReadingsBySite(Object.fromEntries(rows));
+      } catch {
+        if (mounted) {
+          setCurrentSlotReadingsBySite({});
+        }
+      } finally {
+        if (mounted) {
+          setSlotReadingsLoading(false);
+        }
+      }
+    }
+
+    loadCurrentSlotBySite();
+
+    return () => {
+      mounted = false;
+    };
+  }, [currentSlot, sites]);
+
+  useEffect(() => {
+    let mounted = true;
+
+    async function loadCheckpointPreview() {
+      if (!selectedSite?.id || !selectedSite?.type) {
+        setCurrentSlotReading(null);
+        setCheckpointSummary({ completed: 0, missing: 0, expected: 0 });
+        return;
+      }
+
+      setCheckpointLoading(true);
+
+      try {
+        const today = new Date();
+        const todayStart = new Date(today.getFullYear(), today.getMonth(), today.getDate());
+        const expectedThroughCurrent = Math.floor((currentSlot.getTime() - todayStart.getTime()) / (30 * 60 * 1000)) + 1;
+        const expectedBeforeCurrent = Math.max(expectedThroughCurrent - 1, 0);
+        const [duplicate, todayReadings] = await Promise.all([
+          getReadingForSlot({
+            siteId: selectedSite.id,
+            siteType: selectedSite.type,
+            slotIso: currentSlot.toISOString(),
+          }),
+          listReadings({
+            siteId: selectedSite.id,
+            siteType: selectedSite.type,
+            fromDate: formatDateValue(todayStart),
+            toDate: formatDateValue(todayStart),
+            limit: 200,
+          }),
+        ]);
+
+        if (!mounted) {
+          return;
+        }
+
+        const savedSlots = new Set(
+          todayReadings
+            .map((reading) => reading.slot_datetime)
+            .filter(Boolean)
+            .map((value) => new Date(value).getTime())
+        );
+        const completedBeforeCurrent = [...savedSlots].filter((time) => time < currentSlot.getTime()).length;
+        const completed = [...savedSlots].filter((time) => time <= currentSlot.getTime()).length;
+
+        setCurrentSlotReading(duplicate);
+        setCheckpointSummary({
+          completed,
+          missing: Math.max(expectedBeforeCurrent - completedBeforeCurrent, 0),
+          expected: expectedThroughCurrent,
+        });
+      } catch {
+        if (mounted) {
+          setCurrentSlotReading(null);
+          setCheckpointSummary({ completed: 0, missing: 0, expected: 0 });
+        }
+      } finally {
+        if (mounted) {
+          setCheckpointLoading(false);
+        }
+      }
+    }
+
+    loadCheckpointPreview();
+
+    return () => {
+      mounted = false;
+    };
+  }, [currentSlot, selectedSite?.id, selectedSite?.type]);
 
   async function refreshOfflineCount() {
     const nextCount = await getOfflineReadingCount();
@@ -113,12 +366,89 @@ export default function SiteSelectionScreen({ navigation }) {
     }
   }
 
+  const showSiteSkeleton = loading && !sites.length;
+  const showCheckpointSkeleton = showSiteSkeleton || (slotReadingsLoading && !Object.keys(currentSlotReadingsBySite).length);
+  const showStatusSkeleton = showSiteSkeleton || (checkpointLoading && !selectedSite);
+
   return (
     <ScreenShell
       eyebrow="Operator workspace"
       title="Select site"
       subtitle={`Signed in as ${profile?.full_name || profile?.email || 'User'} (${profile?.role || 'operator'})`}
+      showMenuButton
     >
+      {showCheckpointSkeleton ? (
+        <CheckpointSkeleton styles={styles} />
+      ) : selectedSite && checkpointSummary.missing > 0 ? (
+        <MessageBanner tone="error">
+          {checkpointSummary.missing} earlier checkpoint{checkpointSummary.missing === 1 ? '' : 's'} appear missing today for {selectedSite.name}.
+        </MessageBanner>
+      ) : selectedSite ? (
+        <MessageBanner tone="success">No missed checkpoints detected today for {selectedSite.name}.</MessageBanner>
+      ) : null}
+      {!showCheckpointSkeleton && pendingCurrentSlotSites.length ? (
+        <View style={styles.pendingCheckpointStack}>
+          {pendingCurrentSlotSites.map((site) => (
+            <Pressable
+              key={site.id}
+              onPress={() => {
+                setSelectedSite(site);
+                navigation.navigate('submit-reading', { site });
+              }}
+              style={({ pressed }) => [
+                styles.checkpointCard,
+                styles.checkpointCardDue,
+                pressed && styles.checkpointCardPressed,
+              ]}
+            >
+              <View style={styles.checkpointHeader}>
+                <View style={styles.checkpointIcon}>
+                  <Ionicons name="radio-button-on-outline" size={18} color={palette.ink900} />
+                </View>
+                <View style={styles.checkpointCopy}>
+                  <View style={styles.checkpointTitleRow}>
+                    <Text style={styles.checkpointSiteName} numberOfLines={1}>{site.name}</Text>
+                    <View style={[styles.checkpointStatusBadge, styles.checkpointStatusPending]}>
+                      <Text style={styles.checkpointStatusText}>Not submitted</Text>
+                    </View>
+                  </View>
+                  <Text style={styles.checkpointTitle}>Current checkpoint due now</Text>
+                  <Text style={styles.checkpointBody}>
+                    Slot {formatTimestamp(currentSlot)} 
+                  </Text>
+                </View>
+                <Ionicons name="chevron-forward" size={16} color={palette.ink500} />
+              </View>
+            </Pressable>
+          ))}
+        </View>
+      ) : !showCheckpointSkeleton && sites.length ? (
+        <MessageBanner tone="success">All sites are submitted for the current checkpoint.</MessageBanner>
+      ) : null}
+
+      {showStatusSkeleton ? (
+        <StatusStripSkeleton styles={styles} />
+      ) : selectedSite ? (
+        <Card style={styles.statusStripCard}>
+          <View style={styles.statusStripItem}>
+            <Text style={styles.statusStripLabel}>Shift</Text>
+            <Text style={styles.statusStripValue}>{shiftNameForSlot(currentSlot)}</Text>
+          </View>
+          <View style={styles.statusStripItem}>
+            <Text style={styles.statusStripLabel}>Today</Text>
+            <Text style={styles.statusStripValue}>
+              {checkpointSummary.completed}/{checkpointSummary.expected}
+            </Text>
+          </View>
+          <View style={styles.statusStripItem}>
+            <Text style={styles.statusStripLabel}>Sync</Text>
+            <Text style={styles.statusStripValue}>
+              {connectionOnline ? 'Online' : 'Offline'}{offlineCount ? ` · ${offlineCount} pending` : ''}
+            </Text>
+          </View>
+        </Card>
+      ) : null}
+      
       <Card style={styles.summaryCard}>
         <View style={styles.summaryHeader}>
           <View style={styles.summaryIcon}>
@@ -131,18 +461,7 @@ export default function SiteSelectionScreen({ navigation }) {
             </Text>
           </View>
         </View>
-        <View style={styles.metaRow}>
-          <View style={styles.metaPill}>
-            <Text style={styles.metaLabel}>Operator</Text>
-            <Text style={styles.metaValue}>{profile?.full_name || profile?.email || 'Unknown user'}</Text>
-          </View>
-          <View style={styles.metaPill}>
-            <Text style={styles.metaLabel}>Role</Text>
-            <Text style={styles.metaValue}>{String(profile?.role || 'operator').toUpperCase()}</Text>
-          </View>
-        </View>
       </Card>
-
       {selectedSite ? (
         <Card style={styles.selectionCard}>
           <View style={styles.selectionHeader}>
@@ -162,6 +481,45 @@ export default function SiteSelectionScreen({ navigation }) {
           </View>
         </Card>
       ) : null}
+      
+      {false && selectedSite ? (
+        <Card style={[styles.checkpointCard, currentSlotReading ? styles.checkpointCardComplete : styles.checkpointCardDue]}>
+          <View style={styles.checkpointHeader}>
+            <View style={styles.checkpointIcon}>
+              <Ionicons
+                name={currentSlotReading ? 'checkmark-circle-outline' : 'radio-button-on-outline'}
+                size={18}
+                color={palette.ink900}
+              />
+            </View>
+            <View style={styles.checkpointCopy}>
+              <View style={styles.checkpointTitleRow}>
+                <Text style={styles.checkpointSiteName} numberOfLines={1}>{selectedSite.name}</Text>
+                <View style={[styles.checkpointStatusBadge, currentSlotReading ? styles.checkpointStatusDone : styles.checkpointStatusPending]}>
+                  <Text style={styles.checkpointStatusText}>{currentSlotReading ? 'Done' : 'Not submitted'}</Text>
+                </View>
+              </View>
+              <Text style={styles.checkpointTitle}>
+                {currentSlotReading ? 'Current checkpoint submitted' : 'Current checkpoint due now'}
+              </Text>
+              <Text style={styles.checkpointBody}>
+                Slot {formatTimestamp(currentSlot)} · {shiftNameForSlot(currentSlot)}
+              </Text>
+              <Text style={styles.checkpointHint}>
+                {checkpointLoading
+                  ? 'Checking saved readings...'
+                  : currentSlotReading
+                    ? `Already saved by ${readingOperatorName(currentSlotReading)}.`
+                    : `${selectedSite.name} has no reading saved for this slot yet.`}
+              </Text>
+            </View>
+          </View>
+        </Card>
+      ) : null}
+
+      
+
+      
 
       {message ? <MessageBanner tone={sites.length ? 'info' : 'error'}>{message}</MessageBanner> : null}
       {offlineMessage ? <MessageBanner tone={offlineTone}>{offlineMessage}</MessageBanner> : null}
@@ -190,9 +548,7 @@ export default function SiteSelectionScreen({ navigation }) {
       ) : null}
 
       {loading ? (
-        <View style={styles.loadingWrap}>
-          <ActivityIndicator size="large" color={palette.teal600} />
-        </View>
+        <SiteOptionsSkeleton styles={styles} />
       ) : (
         <View style={styles.options}>
           {sites.map((site) => {
@@ -252,17 +608,10 @@ export default function SiteSelectionScreen({ navigation }) {
 
       <View style={styles.actions}>
         <PrimaryButton
-          label="Continue to reading form"
+          label={currentSlotReading ? 'Current slot already saved' : 'Submit current checkpoint'}
           onPress={() => (selectedSite ? navigation.navigate('submit-reading', { site: selectedSite }) : null)}
-          disabled={!selectedSite}
+          disabled={!selectedSite || Boolean(currentSlotReading)}
           icon={<Ionicons name="create-outline" size={16} color={palette.onAccent} />}
-        />
-        <PrimaryButton
-          label="Open reading history"
-          onPress={() => (selectedSite ? navigation.navigate('reading-history', { site: selectedSite }) : null)}
-          disabled={!selectedSite}
-          tone="secondary"
-          icon={<Ionicons name="time-outline" size={16} color={palette.ink900} />}
         />
         {isPrivileged ? (
           <PrimaryButton
@@ -272,12 +621,6 @@ export default function SiteSelectionScreen({ navigation }) {
             icon={<Ionicons name="grid-outline" size={16} color={palette.ink900} />}
           />
         ) : null}
-        <PrimaryButton
-          label="Sign out"
-          onPress={signOut}
-          tone="secondary"
-          icon={<Ionicons name="log-out-outline" size={16} color={palette.ink900} />}
-        />
       </View>
     </ScreenShell>
   );
@@ -316,39 +659,6 @@ function createStyles(palette, isDark, responsiveMetrics) {
       color: palette.ink700,
       fontSize: 14,
       lineHeight: 20,
-    },
-    metaRow: {
-      flexDirection: 'row',
-      flexWrap: 'wrap',
-      gap: 8,
-    },
-    metaPill: {
-      minWidth: 120,
-      flexGrow: 1,
-      borderRadius: 16,
-      borderWidth: 1,
-      borderColor: palette.line,
-      backgroundColor: isDark ? palette.mist : '#F4F9FE',
-      paddingHorizontal: 12,
-      paddingVertical: 10,
-    },
-    metaLabel: {
-      color: palette.ink500,
-      fontSize: 10,
-      fontWeight: '700',
-      textTransform: 'uppercase',
-      letterSpacing: 0.4,
-    },
-    metaValue: {
-      marginTop: 4,
-      color: palette.ink900,
-      fontSize: 13,
-      fontWeight: '700',
-    },
-    loadingWrap: {
-      alignItems: 'center',
-      justifyContent: 'center',
-      paddingVertical: 32,
     },
     options: {
       gap: 12,
@@ -501,6 +811,121 @@ function createStyles(palette, isDark, responsiveMetrics) {
       fontSize: 11,
       lineHeight: 15,
     },
+    checkpointCard: {
+      gap: 8,
+      paddingVertical: 12,
+      paddingHorizontal: 14,
+    },
+    pendingCheckpointStack: {
+      gap: 8,
+    },
+    checkpointCardPressed: {
+      transform: [{ scale: 0.99 }],
+    },
+    checkpointCardDue: {
+      backgroundColor: isDark ? '#182235' : '#F2F6FF',
+      borderColor: isDark ? '#334769' : '#C7D7F5',
+    },
+    checkpointCardComplete: {
+      backgroundColor: isDark ? '#112B24' : '#ECFCF8',
+      borderColor: isDark ? '#1A655E' : '#A7E8DD',
+    },
+    checkpointHeader: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 10,
+    },
+    checkpointIcon: {
+      width: 34,
+      height: 34,
+      borderRadius: 999,
+      alignItems: 'center',
+      justifyContent: 'center',
+      backgroundColor: isDark ? '#123A37' : '#DDF7F3',
+      borderWidth: 1,
+      borderColor: isDark ? '#1FAF9E' : '#9EDFD6',
+    },
+    checkpointCopy: {
+      flex: 1,
+      gap: 2,
+    },
+    checkpointTitleRow: {
+      flexDirection: 'row',
+      flexWrap: 'wrap',
+      alignItems: 'center',
+      gap: 6,
+    },
+    checkpointSiteName: {
+      flexShrink: 1,
+      color: palette.ink900,
+      fontSize: 12,
+      fontWeight: '900',
+    },
+    checkpointStatusBadge: {
+      borderWidth: 1,
+      borderRadius: 999,
+      paddingHorizontal: 7,
+      paddingVertical: 3,
+    },
+    checkpointStatusDone: {
+      borderColor: isDark ? '#1FAF9E' : '#9EDFD6',
+      backgroundColor: isDark ? '#123A37' : '#DDF7F3',
+    },
+    checkpointStatusPending: {
+      borderColor: isDark ? '#8A6514' : '#F7D6A7',
+      backgroundColor: isDark ? '#33240B' : '#FFF5E8',
+    },
+    checkpointStatusText: {
+      color: palette.ink900,
+      fontSize: 9,
+      fontWeight: '900',
+      textTransform: 'uppercase',
+    },
+    checkpointTitle: {
+      color: palette.ink900,
+      fontSize: 15,
+      fontWeight: '900',
+    },
+    checkpointBody: {
+      color: palette.ink700,
+      fontSize: 12,
+      lineHeight: 17,
+      fontWeight: '700',
+    },
+    checkpointHint: {
+      color: palette.ink500,
+      fontSize: 11,
+      lineHeight: 15,
+      fontWeight: '700',
+    },
+    statusStripCard: {
+      flexDirection: 'row',
+      flexWrap: 'wrap',
+      gap: 8,
+      padding: 10,
+    },
+    statusStripItem: {
+      minWidth: 96,
+      flexGrow: 1,
+      borderWidth: 1,
+      borderColor: palette.line,
+      backgroundColor: isDark ? palette.mist : '#F4F9FE',
+      borderRadius: 12,
+      paddingHorizontal: 10,
+      paddingVertical: 8,
+    },
+    statusStripLabel: {
+      color: palette.ink500,
+      fontSize: 9,
+      fontWeight: '900',
+      textTransform: 'uppercase',
+    },
+    statusStripValue: {
+      marginTop: 3,
+      color: palette.ink900,
+      fontSize: 12,
+      fontWeight: '900',
+    },
     offlineCard: {
       gap: 12,
       backgroundColor: isDark ? '#182235' : '#F2F6FF',
@@ -534,6 +959,77 @@ function createStyles(palette, isDark, responsiveMetrics) {
       color: palette.ink700,
       fontSize: 12,
       lineHeight: 18,
+    },
+    skeletonCard: {
+      backgroundColor: isDark ? '#101E2B' : '#F7FBFF',
+      borderColor: palette.line,
+    },
+    skeletonBlock: {
+      backgroundColor: isDark ? '#1B3145' : '#DDEAF6',
+      borderRadius: 999,
+    },
+    skeletonIcon: {
+      width: 34,
+      height: 34,
+      borderRadius: 999,
+    },
+    skeletonSquareIcon: {
+      width: 34,
+      height: 34,
+      borderRadius: 12,
+    },
+    skeletonTitleLine: {
+      width: 120,
+      height: 12,
+    },
+    skeletonBodyLine: {
+      width: '82%',
+      height: 14,
+      marginTop: 4,
+    },
+    skeletonShortLine: {
+      width: '46%',
+      height: 11,
+      marginTop: 4,
+    },
+    skeletonTinyLine: {
+      width: 42,
+      height: 8,
+    },
+    skeletonValueLine: {
+      width: 64,
+      height: 13,
+      marginTop: 6,
+    },
+    skeletonBadge: {
+      width: 78,
+      height: 20,
+    },
+    skeletonBadgeWide: {
+      width: 86,
+      height: 24,
+    },
+    skeletonOptionTitle: {
+      width: '64%',
+      height: 15,
+    },
+    skeletonOptionBody: {
+      width: '92%',
+      height: 11,
+      marginTop: 7,
+    },
+    skeletonOptionBodyShort: {
+      width: '58%',
+      height: 11,
+      marginTop: 5,
+    },
+    skeletonPill: {
+      width: 92,
+      height: 25,
+    },
+    skeletonPillShort: {
+      width: 78,
+      height: 25,
     },
   }, responsiveMetrics, { exclude: ['siteAccent.left', 'siteAccent.right'] }));
 }

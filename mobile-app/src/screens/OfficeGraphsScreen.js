@@ -1496,6 +1496,9 @@ export default function OfficeGraphsScreen({ navigation }) {
   const [tone, setTone] = useState('info');
   const [lastUpdatedAt, setLastUpdatedAt] = useState(null);
   const [headerAlertCount, setHeaderAlertCount] = useState(0);
+  const scrollViewRef = useRef(null);
+  const scrollTopOpacity = useRef(new Animated.Value(0)).current;
+  const [showScrollTop, setShowScrollTop] = useState(false);
   const canExportAnalytics = profile?.role === 'manager' || profile?.role === 'supervisor';
 
   async function loadGraphs({ silent = false } = {}) {
@@ -1587,6 +1590,26 @@ export default function OfficeGraphsScreen({ navigation }) {
   useEffect(() => {
     loadGraphs();
   }, []);
+
+  useEffect(() => {
+    Animated.timing(scrollTopOpacity, {
+      toValue: showScrollTop ? 1 : 0,
+      duration: 180,
+      useNativeDriver: true,
+    }).start();
+  }, [scrollTopOpacity, showScrollTop]);
+
+  function handleGraphScroll(event) {
+    const offsetY = event?.nativeEvent?.contentOffset?.y || 0;
+    const shouldShow = offsetY > 420;
+    if (showScrollTop !== shouldShow) {
+      setShowScrollTop(shouldShow);
+    }
+  }
+
+  function handleScrollToTop() {
+    scrollViewRef.current?.scrollTo?.({ y: 0, animated: true });
+  }
 
   async function handleExportAnalytics(format) {
     if (!canExportAnalytics) {
@@ -1723,6 +1746,37 @@ export default function OfficeGraphsScreen({ navigation }) {
       statusChips={headerStatusChips}
       refreshing={loading}
       onRefresh={() => loadGraphs()}
+      scrollRef={scrollViewRef}
+      onScroll={handleGraphScroll}
+      scrollEventThrottle={16}
+      floatingOverlay={
+        <Animated.View
+          pointerEvents={showScrollTop ? 'auto' : 'none'}
+          style={[
+            styles.scrollTopButtonWrap,
+            {
+              opacity: scrollTopOpacity,
+              transform: [
+                {
+                  translateY: scrollTopOpacity.interpolate({
+                    inputRange: [0, 1],
+                    outputRange: [12, 0],
+                  }),
+                },
+              ],
+            },
+          ]}
+        >
+          <Pressable
+            onPress={handleScrollToTop}
+            accessibilityRole="button"
+            accessibilityLabel="Scroll to top"
+            style={({ pressed }) => [styles.scrollTopButton, pressed && styles.pressed]}
+          >
+            <Ionicons name="arrow-up" size={22} color={palette.onAccent} />
+          </Pressable>
+        </Animated.View>
+      }
     >
       <View style={styles.topPillRow}>
         {canExportAnalytics ? (
@@ -1824,6 +1878,28 @@ function createStyles(palette, isDark, responsiveMetrics) {
     graphSplitExport: {
       flex: 1,
       maxWidth: responsiveMetrics.isTablet ? 176 : 120,
+    },
+    scrollTopButtonWrap: {
+      position: 'absolute',
+      right: responsiveMetrics.isTablet ? 28 : 18,
+      bottom: responsiveMetrics.isTablet ? 28 : 20,
+      zIndex: 1500,
+      elevation: 1500,
+    },
+    scrollTopButton: {
+      width: 50,
+      height: 50,
+      alignItems: 'center',
+      justifyContent: 'center',
+      borderWidth: 1,
+      borderColor: isDark ? '#2DD4BF' : '#0F766E',
+      backgroundColor: palette.navy700,
+      borderRadius: 999,
+      shadowColor: isDark ? '#00D6D0' : '#0F766E',
+      shadowOpacity: isDark ? 0.28 : 0.18,
+      shadowRadius: 14,
+      shadowOffset: { width: 0, height: 8 },
+      elevation: 8,
     },
     pressed: {
       transform: [{ scale: 0.98 }],

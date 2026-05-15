@@ -1,21 +1,21 @@
 import { supabase } from '../lib/supabase';
 
 const CHLORINATION_SELECT =
-  'id, site_id, reading_datetime, slot_datetime, created_at, remarks, totalizer, pressure_psi, rc_ppm, turbidity_ntu, ph, tds_ppm, tank_level_liters, flowrate_m3hr, chlorine_consumed, peroxide_consumption, chlorination_power_kwh, status, sites(id, name, type), submitted_profile:profiles!chlorination_readings_submitted_by_fkey(full_name, email)';
+  'id, site_id, submitted_by, reading_datetime, slot_datetime, created_at, remarks, totalizer, pressure_psi, rc_ppm, turbidity_ntu, ph, tds_ppm, tank_level_liters, flowrate_m3hr, chlorine_consumed, peroxide_consumption, chlorination_power_kwh, status, sites(id, name, type), submitted_profile:profiles!chlorination_readings_submitted_by_fkey(full_name, email)';
 
 const DEEPWELL_SELECT =
-  'id, site_id, reading_datetime, slot_datetime, created_at, remarks, upstream_pressure_psi, downstream_pressure_psi, flowrate_m3hr, vfd_frequency_hz, voltage_l1_v, voltage_l2_v, voltage_l3_v, amperage_a, tds_ppm, power_kwh_shift, status, sites(id, name, type), submitted_profile:profiles!deepwell_readings_submitted_by_fkey(full_name, email)';
+  'id, site_id, submitted_by, reading_datetime, slot_datetime, created_at, remarks, upstream_pressure_psi, downstream_pressure_psi, flowrate_m3hr, vfd_frequency_hz, voltage_l1_v, voltage_l2_v, voltage_l3_v, amperage_a, tds_ppm, power_kwh_shift, status, sites(id, name, type), submitted_profile:profiles!deepwell_readings_submitted_by_fkey(full_name, email)';
 
 const READING_META = {
   CHLORINATION: {
     tableName: 'chlorination_readings',
     select:
-      'id, site_id, reading_datetime, slot_datetime, created_at, submitted_profile:profiles!chlorination_readings_submitted_by_fkey(full_name, email)',
+      'id, site_id, submitted_by, reading_datetime, slot_datetime, created_at, submitted_profile:profiles!chlorination_readings_submitted_by_fkey(full_name, email)',
   },
   DEEPWELL: {
     tableName: 'deepwell_readings',
     select:
-      'id, site_id, reading_datetime, slot_datetime, created_at, submitted_profile:profiles!deepwell_readings_submitted_by_fkey(full_name, email)',
+      'id, site_id, submitted_by, reading_datetime, slot_datetime, created_at, submitted_profile:profiles!deepwell_readings_submitted_by_fkey(full_name, email)',
   },
 };
 
@@ -96,6 +96,27 @@ export async function createReading(payload) {
   const { data, error } = await supabase
     .from(tableName)
     .insert(tablePayload)
+    .select('id')
+    .single();
+
+  if (error) {
+    throw error;
+  }
+
+  return data;
+}
+
+export async function updateReading(readingId, payload) {
+  const tableName = payload?.site_type === 'CHLORINATION' ? 'chlorination_readings' : 'deepwell_readings';
+  const tablePayload =
+    payload?.site_type === 'CHLORINATION'
+      ? buildChlorinationPayload(payload)
+      : buildDeepwellPayload(payload);
+
+  const { data, error } = await supabase
+    .from(tableName)
+    .update(tablePayload)
+    .eq('id', readingId)
     .select('id')
     .single();
 

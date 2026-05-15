@@ -75,12 +75,20 @@ export default function NemeXusApp() {
   const [route, setRoute] = useState(initialRoute);
   const [resetMessage, setResetMessage] = useState('');
   const [resetTone, setResetTone] = useState('info');
+  const [operatorSite, setOperatorSite] = useState(null);
 
   useEffect(() => {
     if ((!session || !profile) && route.name !== 'reset-password') {
       setRoute(initialRoute);
+      setOperatorSite(null);
     }
   }, [profile, route.name, session]);
+
+  useEffect(() => {
+    if (route.params?.site) {
+      setOperatorSite(route.params.site);
+    }
+  }, [route.params?.site]);
 
   useEffect(() => {
     if (!passwordRecovery?.active) {
@@ -196,19 +204,21 @@ export default function NemeXusApp() {
   } else if (routeName === 'office-graphs' && isPrivileged) {
     screen = <OfficeGraphsScreen navigation={navigation} />;
   } else if (routeName === 'site-selection') {
-    screen = <SiteSelectionScreen navigation={navigation} />;
+    screen = <SiteSelectionScreen navigation={navigation} onSelectedSiteChange={setOperatorSite} />;
   } else if (routeName === 'submit-reading') {
     screen = (
       <SubmitReadingScreen
         navigation={navigation}
-        site={route.params.site}
+        site={route.params.site || operatorSite}
+        editingReading={route.params.editingReading}
+        editReturnParams={route.params.editReturnParams}
       />
     );
   } else if (routeName === 'reading-history') {
     screen = (
       <ReadingHistoryScreen
         navigation={navigation}
-        site={route.params.site}
+        site={route.params.siteScope === 'all' ? null : route.params.site || operatorSite}
         source={route.params.source}
       />
     );
@@ -219,14 +229,36 @@ export default function NemeXusApp() {
     (routeName === 'office-dashboard' ||
       routeName === 'office-graphs' ||
       (routeName === 'reading-history' && route.params?.source === 'office-dashboard'));
+  const showOperatorBottomNav =
+    isOperator &&
+    (routeName === 'site-selection' ||
+      routeName === 'submit-reading' ||
+      (routeName === 'office-dashboard' && route.params?.section === 'readings') ||
+      (routeName === 'reading-history' && route.params?.source !== 'office-dashboard'));
   const bottomNavActiveKey =
-    routeName === 'office-graphs'
-      ? 'graphs'
+    profile?.role === 'admin'
+      ? routeName === 'reading-history'
+          ? 'history'
+          : route.params?.section === 'roles'
+            ? 'roles'
+            : route.params?.section === 'approvals'
+              ? 'approvals'
+              : route.params?.section === 'readings'
+                ? 'history'
+              : 'dashboard'
+      : routeName === 'office-graphs'
+        ? 'graphs'
+        : routeName === 'reading-history'
+          ? 'history'
+          : route.params?.section === 'notifications'
+            ? 'notifications'
+            : 'dashboard';
+  const operatorBottomNavActiveKey =
+    routeName === 'submit-reading' || (routeName === 'office-dashboard' && route.params?.section === 'readings')
+      ? 'checkpoint'
       : routeName === 'reading-history'
         ? 'history'
-        : route.params?.section === 'notifications'
-          ? 'notifications'
-          : 'dashboard';
+        : 'dashboard';
 
   return (
     <SafeAreaView
@@ -238,6 +270,14 @@ export default function NemeXusApp() {
         <View style={styles.screenFrame}>{screen}</View>
         {showOfficeBottomNav ? (
           <OfficeBottomNav activeKey={bottomNavActiveKey} navigation={navigation} />
+        ) : null}
+        {showOperatorBottomNav ? (
+          <OfficeBottomNav
+            activeKey={operatorBottomNavActiveKey}
+            navigation={navigation}
+            variant="operator"
+            currentSite={operatorSite}
+          />
         ) : null}
       </View>
     </SafeAreaView>

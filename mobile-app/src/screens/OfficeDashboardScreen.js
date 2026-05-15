@@ -666,19 +666,6 @@ function RoleBadge({ role }) {
   );
 }
 
-function NavChip({ label, active, onPress, iconName, activeIconColor, iconColor }) {
-  return (
-    <Pressable onPress={onPress} style={[styles.navChip, active && styles.navChipActive]}>
-      <Ionicons
-        name={iconName}
-        size={13}
-        color={active ? activeIconColor : iconColor}
-      />
-      <Text style={[styles.navChipText, active && styles.navChipTextActive]}>{label}</Text>
-    </Pressable>
-  );
-}
-
 function OperationAlertsPanel({ alerts, palette }) {
   const hasAlerts = alerts.length > 0;
   const [expandedAlerts, setExpandedAlerts] = useState({});
@@ -1092,24 +1079,6 @@ export default function OfficeDashboardScreen({ navigation, initialSection }) {
       mounted = false;
     };
   }, [profile?.id, profile?.email]);
-
-  const sections = useMemo(() => {
-    if (!isAdmin) {
-      return [{ key: 'readings', label: 'Readings', iconName: 'reader-outline' }];
-    }
-
-    const baseSections = [
-      { key: 'overview', label: 'Overview', iconName: 'grid-outline' },
-      { key: 'approvals', label: 'Approvals', iconName: 'notifications-outline' },
-      { key: 'readings', label: 'Readings', iconName: 'reader-outline' },
-    ];
-
-    if (isAdmin) {
-      baseSections.push({ key: 'roles', label: 'Roles', iconName: 'people-outline' });
-    }
-
-    return baseSections;
-  }, [isAdmin]);
 
   useEffect(() => {
     if (!isAdmin && activeSection !== 'readings' && activeSection !== 'notifications') {
@@ -2171,28 +2140,6 @@ export default function OfficeDashboardScreen({ navigation, initialSection }) {
         </View>
       </Modal>
 
-      {isAdmin ? (
-        <Card style={styles.navigationCard}>
-          <View style={styles.navigationHeader}>
-            <Text style={styles.navigationTitle}>Sections</Text>
-            <Text style={styles.navigationMeta}>{sections.length} views</Text>
-          </View>
-          <View style={styles.navRow}>
-            {sections.map((section) => (
-              <NavChip
-                key={section.key}
-                label={section.label}
-                iconName={section.iconName}
-                active={activeSection === section.key}
-                onPress={() => setActiveSection(section.key)}
-                iconColor={palette.ink700}
-                activeIconColor={palette.onAccent}
-              />
-            ))}
-          </View>
-        </Card>
-      ) : null}
-
       {message ? <MessageBanner tone={tone}>{message}</MessageBanner> : null}
 
       {loading ? (
@@ -2374,27 +2321,6 @@ function createStyles(palette, isDark, responsiveMetrics) {
   quickActionPressed: {
     transform: [{ scale: 0.98 }],
   },
-  navigationCard: {
-    gap: 8,
-    paddingVertical: 10,
-    paddingHorizontal: 10,
-  },
-  navigationHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    gap: 8,
-  },
-  navigationTitle: {
-    color: palette.ink900,
-    fontSize: 13,
-    fontWeight: '800',
-  },
-  navigationMeta: {
-    color: palette.ink500,
-    fontSize: 11,
-    fontWeight: '700',
-  },
   profileTopRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
@@ -2472,34 +2398,6 @@ function createStyles(palette, isDark, responsiveMetrics) {
     marginTop: 2,
     color: palette.ink700,
     fontSize: 12,
-  },
-  navRow: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 5,
-  },
-  navChip: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 4,
-    paddingHorizontal: 8,
-    paddingVertical: 5,
-    borderRadius: 999,
-    backgroundColor: isDark ? palette.mist : '#F2F8FE',
-    borderWidth: 1,
-    borderColor: palette.line,
-  },
-  navChipActive: {
-    backgroundColor: palette.navy700,
-    borderColor: palette.cyan300,
-  },
-  navChipText: {
-    color: palette.ink700,
-    fontSize: 10,
-    fontWeight: '800',
-  },
-  navChipTextActive: {
-    color: palette.onAccent,
   },
   sectionStack: {
     gap: 10,

@@ -29,6 +29,7 @@ import { aggregateDailyRows } from '../utils/production';
 const DEFAULT_HISTORY_LIMIT = 50;
 const MAX_HISTORY_LIMIT = 200;
 const MAX_AVERAGE_SOURCE_LIMIT = 500;
+const EDIT_WINDOW_MS = 5 * 60 * 1000;
 const SHIFT_OPTIONS = [
   { key: 'all', label: 'All shifts' },
   { key: 'a', label: 'A-Shift' },
@@ -729,16 +730,55 @@ function getReadingOperatorName(row) {
   return row?.submitted_profile?.full_name || row?.submitted_profile?.email || '-';
 }
 
-function DataTable({ columns, rows, emptyMessage }) {
+function getReadingSite(row) {
+  const relatedSite = row?.sites || row?.site || {};
+
+  return {
+    id: row?.site_id || relatedSite.id,
+    name: relatedSite.name || row?.site_name || getReadingSummaryTitle(row),
+    type: row?.site_type || relatedSite.type,
+  };
+}
+
+function getEditWindowRemainingMs(row, now) {
+  if (!row?.created_at) {
+    return 0;
+  }
+
+  const savedTime = new Date(row.created_at).getTime();
+  if (!Number.isFinite(savedTime)) {
+    return 0;
+  }
+
+  return Math.max(0, savedTime + EDIT_WINDOW_MS - now.getTime());
+}
+
+function formatEditCountdown(remainingMs) {
+  const totalSeconds = Math.ceil(remainingMs / 1000);
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  return `${minutes}:${String(seconds).padStart(2, '0')}`;
+}
+
+function DataTable({ columns, rows, emptyMessage, onEditReading }) {
   const { palette, isDark } = useTheme();
   const { width } = useWindowDimensions();
   const responsiveMetrics = useMemo(() => getResponsiveMetrics(width), [width]);
   const styles = useMemo(() => createStyles(palette, isDark, responsiveMetrics), [palette, isDark, responsiveMetrics]);
   const [selectedRow, setSelectedRow] = useState(null);
+  const [timerNow, setTimerNow] = useState(() => new Date());
 
   useEffect(() => {
     setSelectedRow(null);
   }, [rows]);
+
+  useEffect(() => {
+    const intervalId = setInterval(() => {
+      setTimerNow(new Date());
+    }, 1000);
+
+    return () => clearInterval(intervalId);
+  }, []);
 
   if (!rows.length) {
     return (
@@ -754,6 +794,8 @@ function DataTable({ columns, rows, emptyMessage }) {
 
   const summaryRows = getRecordedValueRows(selectedRow);
   const submitter = getReadingOperatorName(selectedRow);
+  const editRemainingMs = getEditWindowRemainingMs(selectedRow, timerNow);
+  const canEditSelectedReading = editRemainingMs > 0;
 
   return (
     <Card style={styles.tableCard}>
@@ -868,10 +910,94 @@ function DataTable({ columns, rows, emptyMessage }) {
                 </View>
               ) : null}
             </ScrollView>
+
+            {onEditReading ? (
+              <View style={styles.readingSummaryActions}>
+                <Pressable
+                  onPress={() => {
+                    if (!canEditSelectedReading || !selectedRow) {
+                      return;
+                    }
+
+                    setSelectedRow(null);
+                    onEditReading(selectedRow);
+                  }}
+                  disabled={!canEditSelectedReading}
+                  style={({ pressed }) => [
+                    styles.readingSummaryEditButton,
+                    !canEditSelectedReading && styles.readingSummaryEditButtonDisabled,
+                    pressed && canEditSelectedReading ? styles.readingSummaryEditButtonPressed : null,
+                  ]}
+                >
+                  <Ionicons name="create-outline" size={15} color={canEditSelectedReading ? palette.onAccent : palette.ink500} />
+                  <Text style={[styles.readingSummaryEditText, !canEditSelectedReading && styles.readingSummaryEditTextDisabled]}>
+                    {canEditSelectedReading ? `Edit ${formatEditCountdown(editRemainingMs)}` : 'Edit expired'}
+                  </Text>
+                </Pressable>
+              </View>
+            ) : null}
           </View>
         </View>
       </Modal>
     </Card>
+  );
+}
+
+function ReadingHistorySkeleton() {
+  const { palette, isDark } = useTheme();
+  const { width } = useWindowDimensions();
+  const responsiveMetrics = useMemo(() => getResponsiveMetrics(width), [width]);
+  const styles = useMemo(() => createStyles(palette, isDark, responsiveMetrics), [palette, isDark, responsiveMetrics]);
+
+  return (
+    <View style={styles.resultsStack}>
+      <View style={styles.historyViewTabs}>
+        <View style={[styles.historyViewTab, styles.historyViewTabActive, styles.skeletonTab]}>
+          <View style={[styles.historySkeletonBlock, styles.historySkeletonIcon]} />
+          <View style={[styles.historySkeletonBlock, styles.historySkeletonTabText]} />
+        </View>
+        <View style={[styles.historyViewTab, styles.skeletonTab]}>
+          <View style={[styles.historySkeletonBlock, styles.historySkeletonIcon]} />
+          <View style={[styles.historySkeletonBlock, styles.historySkeletonTabTextShort]} />
+        </View>
+      </View>
+
+      <Card style={styles.shiftArrangeCard}>
+        <View style={styles.shiftArrangeHeader}>
+          <View style={[styles.historySkeletonBlock, styles.historySkeletonSmallIcon]} />
+          <View style={[styles.historySkeletonBlock, styles.historySkeletonHeading]} />
+        </View>
+        <View style={styles.shiftArrangeChips}>
+          {[0, 1, 2].map((item) => (
+            <View key={item} style={[styles.historySkeletonBlock, styles.historySkeletonChip]} />
+          ))}
+        </View>
+      </Card>
+
+      <View style={styles.tableSectionLabelRow}>
+        <View style={[styles.historySkeletonBlock, styles.historySkeletonSmallIcon]} />
+        <View style={[styles.historySkeletonBlock, styles.historySkeletonSectionLabel]} />
+      </View>
+
+      <Card style={styles.tableCard}>
+        <View style={[styles.tableRow, styles.tableHeaderRow]}>
+          {[0, 1, 2].map((item) => (
+            <View key={item} style={[styles.tableCell, item === 0 && styles.tableFirstCell]}>
+              <View style={[styles.historySkeletonBlock, styles.historySkeletonHeaderCell]} />
+            </View>
+          ))}
+        </View>
+        {[0, 1, 2, 3].map((row) => (
+          <View key={row} style={[styles.tableRow, row % 2 === 0 ? styles.tableRowEven : styles.tableRowOdd]}>
+            {[0, 1, 2].map((cell) => (
+              <View key={`${row}:${cell}`} style={[styles.tableCell, cell === 0 && styles.tableFirstCell]}>
+                <View style={[styles.historySkeletonBlock, cell === 0 ? styles.historySkeletonCellWide : styles.historySkeletonCell]} />
+              </View>
+            ))}
+          </View>
+        ))}
+      </Card>
+    </View>
   );
 }
 
@@ -917,7 +1043,11 @@ export default function ReadingHistoryScreen({ navigation, site, source }) {
   const [lastUpdatedAt, setLastUpdatedAt] = useState(null);
   const [pickerTarget, setPickerTarget] = useState(null);
   const [operatorSummaryDismissed, setOperatorSummaryDismissed] = useState(false);
-  const resolvedTableMode = isOfficeView ? tableMode : site?.type || tableMode;
+  const isOperatorAllSitesView = !isOfficeView && !site?.id;
+  const [operatorSiteView, setOperatorSiteView] = useState('all');
+  const resolvedTableMode = isOfficeView
+    ? tableMode
+    : site?.type || (operatorSiteView === 'all' ? '' : operatorSiteView);
 
   const chlorinationColumns = [
     { key: 'date', label: 'Date', width: 110, render: (row) => formatShortDateTime(row.slot_datetime).slice(0, 10) },
@@ -1033,7 +1163,14 @@ export default function ReadingHistoryScreen({ navigation, site, source }) {
     setMessage('');
     setMessageTone('info');
 
-    const effectiveTableMode = nextFilters?.tableMode ?? tableMode;
+    const effectiveOperatorSiteView = nextFilters?.operatorSiteView ?? operatorSiteView;
+    const effectiveOperatorSiteType =
+      !isOfficeView && !site?.id && effectiveOperatorSiteView !== 'all'
+        ? effectiveOperatorSiteView
+        : undefined;
+    const effectiveTableMode = isOfficeView
+      ? nextFilters?.tableMode ?? tableMode
+      : site?.type || effectiveOperatorSiteType || tableMode;
     const effectiveHistoryView = nextFilters?.historyView ?? activeHistoryView;
     const effectiveFromDate = nextFilters?.fromDate ?? fromDate;
     const effectiveToDate = nextFilters?.toDate ?? toDate;
@@ -1057,7 +1194,7 @@ export default function ReadingHistoryScreen({ navigation, site, source }) {
       const siteDefaultRange = shouldUseSiteDefaultRange ? previousAndCurrentDayDateValues() : null;
       const filters = {
         siteId: site?.id || undefined,
-        siteType: isOfficeView ? effectiveTableMode : undefined,
+        siteType: isOfficeView ? effectiveTableMode : effectiveOperatorSiteType,
         fromDate: effectiveFromDate.trim() || undefined,
         toDate: effectiveToDate.trim() || undefined,
       };
@@ -1110,10 +1247,10 @@ export default function ReadingHistoryScreen({ navigation, site, source }) {
           : isOfficeView
             ? `Showing ${nextItems.length} ${effectiveTableMode.toLowerCase()} record(s).`
           : shouldUseSiteDefaultRange
-            ? `Showing ${nextItems.length} record(s) from previous day and current day for this site.`
+            ? `Showing ${nextItems.length} record(s) from previous day and current day for ${isOperatorAllSitesView ? 'all sites' : 'this site'}.`
             : effectiveHistoryView === 'average'
-              ? `Showing ${averageRows.length} daily average row(s) for this site.`
-              : `Showing latest ${nextItems.length} record(s) for this site.`
+              ? `Showing ${averageRows.length} daily average row(s) for ${isOperatorAllSitesView ? 'all sites' : 'this site'}.`
+              : `Showing latest ${nextItems.length} record(s) for ${isOperatorAllSitesView ? 'all sites' : 'this site'}.`
       );
     } catch (error) {
       setItems([]);
@@ -1151,8 +1288,14 @@ export default function ReadingHistoryScreen({ navigation, site, source }) {
     setToDate('');
     setLimit(String(DEFAULT_HISTORY_LIMIT));
     setHistoryShiftFilter('all');
+    if (isOperatorAllSitesView) {
+      setOperatorSiteView('all');
+      setActiveHistoryView('records');
+    }
     await loadHistory({
       tableMode,
+      operatorSiteView: isOperatorAllSitesView ? 'all' : operatorSiteView,
+      historyView: isOperatorAllSitesView ? 'records' : activeHistoryView,
       fromDate: '',
       toDate: '',
       limit: String(DEFAULT_HISTORY_LIMIT),
@@ -1300,6 +1443,18 @@ export default function ReadingHistoryScreen({ navigation, site, source }) {
     }
   }
 
+  function handleEditReading(reading) {
+    navigation.navigate('submit-reading', {
+      site: getReadingSite(reading),
+      editingReading: reading,
+      editReturnParams: {
+        site: site || getReadingSite(reading),
+        siteScope: site ? undefined : 'all',
+        source,
+      },
+    });
+  }
+
   const headerStatusChips = [
     {
       key: 'connected',
@@ -1367,18 +1522,18 @@ export default function ReadingHistoryScreen({ navigation, site, source }) {
             <View style={styles.operatorSummaryCopy}>
               <Text style={styles.operatorSummaryTitle}>Operator history view</Text>
               <Text style={styles.operatorSummaryBody}>
-                Review all submitted readings for {site?.name || 'your selected site'}, including entries from other operators.
+                Review all submitted readings for {isOperatorAllSitesView ? 'all sites' : site?.name || 'your selected site'}, including entries from other operators.
               </Text>
             </View>
           </View>
           <View style={styles.operatorMetaRow}>
             <View style={styles.operatorMetaPill}>
               <Text style={styles.operatorMetaLabel}>Site</Text>
-              <Text style={styles.operatorMetaValue}>{site?.name || '-'}</Text>
+              <Text style={styles.operatorMetaValue}>{isOperatorAllSitesView ? 'All sites' : site?.name || '-'}</Text>
             </View>
             <View style={styles.operatorMetaPill}>
               <Text style={styles.operatorMetaLabel}>Type</Text>
-              <Text style={styles.operatorMetaValue}>{site?.type || resolvedTableMode}</Text>
+              <Text style={styles.operatorMetaValue}>{isOperatorAllSitesView ? 'Chlorination + Deepwell' : site?.type || resolvedTableMode}</Text>
             </View>
             <View style={styles.operatorMetaPill}>
               <Text style={styles.operatorMetaLabel}>Scope</Text>
@@ -1436,14 +1591,49 @@ export default function ReadingHistoryScreen({ navigation, site, source }) {
             <View style={[styles.filterField, useMobileFilterPanel && styles.filterSection]}>
               {useMobileFilterPanel ? <Text style={styles.filterSectionTitle}>Table</Text> : null}
               <Text style={styles.filterLabel}>Site view</Text>
-              <View style={styles.operatorTypePill}>
-                <Ionicons
-                  name={resolvedTableMode === 'CHLORINATION' ? 'water-outline' : 'flash-outline'}
-                  size={14}
-                  color={palette.onAccent}
-                />
-                <Text style={styles.operatorTypePillText}>{resolvedTableMode || 'Selected site'}</Text>
-              </View>
+              {isOperatorAllSitesView ? (
+                <View style={styles.modeRow}>
+                  <TableModeChip
+                    label="All sites"
+                    iconName="layers-outline"
+                    active={operatorSiteView === 'all'}
+                    onPress={async () => {
+                      setOperatorSiteView('all');
+                      setActiveHistoryView('records');
+                      await loadHistory({ operatorSiteView: 'all', historyView: 'records' });
+                    }}
+                  />
+                  <TableModeChip
+                    label="Chlorination"
+                    iconName="water-outline"
+                    active={operatorSiteView === 'CHLORINATION'}
+                    onPress={async () => {
+                      setOperatorSiteView('CHLORINATION');
+                      setActiveHistoryView('records');
+                      await loadHistory({ operatorSiteView: 'CHLORINATION', historyView: 'records' });
+                    }}
+                  />
+                  <TableModeChip
+                    label="Deepwell"
+                    iconName="flash-outline"
+                    active={operatorSiteView === 'DEEPWELL'}
+                    onPress={async () => {
+                      setOperatorSiteView('DEEPWELL');
+                      setActiveHistoryView('records');
+                      await loadHistory({ operatorSiteView: 'DEEPWELL', historyView: 'records' });
+                    }}
+                  />
+                </View>
+              ) : (
+                <View style={styles.operatorTypePill}>
+                  <Ionicons
+                    name={resolvedTableMode === 'CHLORINATION' ? 'water-outline' : 'flash-outline'}
+                    size={14}
+                    color={palette.onAccent}
+                  />
+                  <Text style={styles.operatorTypePillText}>{resolvedTableMode || 'Selected site'}</Text>
+                </View>
+              )}
             </View>
           )}
 
@@ -1598,7 +1788,7 @@ export default function ReadingHistoryScreen({ navigation, site, source }) {
       {message ? <MessageBanner tone={messageTone}>{message}</MessageBanner> : null}
 
       {loading ? (
-        <LoadingState label="Loading reading history" />
+        isOfficeView ? <LoadingState label="Loading reading history" /> : <ReadingHistorySkeleton />
       ) : (
         <View style={styles.resultsStack}>
           <View style={styles.historyViewTabs}>
@@ -1710,6 +1900,7 @@ export default function ReadingHistoryScreen({ navigation, site, source }) {
                     ? `Try another date range or confirm ${resolvedTableMode.toLowerCase()} readings have already been submitted to the database.`
                     : 'No records were found for this site in the selected date range.'
                 }
+                onEditReading={handleEditReading}
               />
             </>
           ) : null}
@@ -2237,6 +2428,54 @@ function createStyles(palette, isDark, responsiveMetrics = getResponsiveMetrics(
       color: isDark ? palette.ink900 : palette.navy900,
       fontWeight: '700',
     },
+    skeletonTab: {
+      minHeight: 38,
+    },
+    historySkeletonBlock: {
+      backgroundColor: isDark ? '#1B3145' : '#DDEAF6',
+      borderRadius: 999,
+    },
+    historySkeletonIcon: {
+      width: 14,
+      height: 14,
+    },
+    historySkeletonSmallIcon: {
+      width: 13,
+      height: 13,
+    },
+    historySkeletonTabText: {
+      width: 116,
+      height: 12,
+    },
+    historySkeletonTabTextShort: {
+      width: 78,
+      height: 12,
+    },
+    historySkeletonHeading: {
+      width: 108,
+      height: 12,
+    },
+    historySkeletonChip: {
+      width: 78,
+      height: 28,
+    },
+    historySkeletonSectionLabel: {
+      width: 174,
+      height: 11,
+    },
+    historySkeletonHeaderCell: {
+      width: '72%',
+      height: 12,
+      backgroundColor: isDark ? '#35506B' : '#8FB6D9',
+    },
+    historySkeletonCell: {
+      width: '58%',
+      height: 11,
+    },
+    historySkeletonCellWide: {
+      width: '78%',
+      height: 11,
+    },
     readingSummaryOverlay: {
       flex: 1,
       justifyContent: 'center',
@@ -2372,6 +2611,38 @@ function createStyles(palette, isDark, responsiveMetrics = getResponsiveMetrics(
       fontSize: 11,
       lineHeight: 16,
       fontWeight: '700',
+    },
+    readingSummaryActions: {
+      marginTop: 12,
+      flexDirection: 'row',
+      justifyContent: 'flex-end',
+    },
+    readingSummaryEditButton: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'center',
+      gap: 6,
+      borderRadius: 999,
+      backgroundColor: palette.navy700,
+      paddingHorizontal: 14,
+      paddingVertical: 10,
+      minWidth: 112,
+    },
+    readingSummaryEditButtonPressed: {
+      transform: [{ scale: 0.98 }],
+    },
+    readingSummaryEditButtonDisabled: {
+      backgroundColor: isDark ? '#172536' : '#E8EEF5',
+      borderWidth: 1,
+      borderColor: palette.line,
+    },
+    readingSummaryEditText: {
+      color: palette.onAccent,
+      fontSize: 12,
+      fontWeight: '900',
+    },
+    readingSummaryEditTextDisabled: {
+      color: palette.ink500,
     },
   }, responsiveMetrics, {
     exclude: [

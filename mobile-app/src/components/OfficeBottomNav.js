@@ -6,7 +6,7 @@ import { useTheme } from '../context/ThemeContext';
 import { getResponsiveMetrics, scaleStyleDefinitions } from '../theme';
 import { loadNotificationUnreadCount } from '../utils/notificationState';
 
-const ITEMS = [
+const DEFAULT_ITEMS = [
   {
     key: 'dashboard',
     label: 'Dashboard',
@@ -37,19 +37,83 @@ const ITEMS = [
   },
 ];
 
-export default function OfficeBottomNav({ activeKey, navigation }) {
+const ADMIN_ITEMS = [
+  {
+    key: 'dashboard',
+    label: 'Dashboard',
+    iconName: 'grid-outline',
+    routeName: 'office-dashboard',
+    params: { section: 'overview' },
+  },
+  {
+    key: 'history',
+    label: 'Readings',
+    iconName: 'reader-outline',
+    routeName: 'office-dashboard',
+    params: { section: 'readings' },
+  },
+  {
+    key: 'approvals',
+    label: 'Approvals',
+    iconName: 'notifications-outline',
+    routeName: 'office-dashboard',
+    params: { section: 'approvals' },
+  },
+  {
+    key: 'roles',
+    label: 'Roles',
+    iconName: 'people-outline',
+    routeName: 'office-dashboard',
+    params: { section: 'roles' },
+  },
+];
+
+export default function OfficeBottomNav({ activeKey, navigation, variant = 'office', currentSite }) {
   const { profile } = useAuth();
   const { palette, isDark } = useTheme();
   const { width } = useWindowDimensions();
   const metrics = useMemo(() => getResponsiveMetrics(width), [width]);
   const styles = useMemo(() => createStyles(palette, isDark, metrics), [palette, isDark, metrics]);
+  const items = useMemo(() => {
+    if (variant === 'operator') {
+      return [
+        {
+          key: 'dashboard',
+          label: 'Site',
+          iconName: 'location-outline',
+          routeName: 'site-selection',
+          params: {},
+        },
+        {
+          key: 'history',
+          label: 'History',
+          iconName: 'reader-outline',
+          routeName: 'reading-history',
+          params: { siteScope: 'all' },
+        },
+        {
+          key: 'checkpoint',
+          label: 'Checkpoint',
+          iconName: 'time-outline',
+          routeName: 'office-dashboard',
+          params: { section: 'readings' },
+        },
+      ];
+    }
+
+    return profile?.role === 'admin' ? ADMIN_ITEMS : DEFAULT_ITEMS;
+  }, [currentSite, profile?.role, variant]);
   const [unreadNotificationCount, setUnreadNotificationCount] = useState(0);
-  const activeScales = useRef(
-    Object.fromEntries(ITEMS.map((item) => [item.key, new Animated.Value(item.key === activeKey ? 1 : 0)]))
-  ).current;
+  const activeScales = useRef({}).current;
+
+  items.forEach((item) => {
+    if (!activeScales[item.key]) {
+      activeScales[item.key] = new Animated.Value(item.key === activeKey ? 1 : 0);
+    }
+  });
 
   useEffect(() => {
-    ITEMS.forEach((item) => {
+    items.forEach((item) => {
       Animated.spring(activeScales[item.key], {
         toValue: item.key === activeKey ? 1 : 0,
         useNativeDriver: true,
@@ -57,7 +121,7 @@ export default function OfficeBottomNav({ activeKey, navigation }) {
         friction: 9,
       }).start();
     });
-  }, [activeKey, activeScales]);
+  }, [activeKey, activeScales, items]);
 
   useEffect(() => {
     let mounted = true;
@@ -83,7 +147,7 @@ export default function OfficeBottomNav({ activeKey, navigation }) {
       <View style={styles.navGlow} />
       <View style={styles.navBar}>
         <View pointerEvents="none" style={styles.navBlurLayer} />
-        {ITEMS.map((item) => {
+        {items.map((item) => {
           const active = activeKey === item.key;
           const animatedScale = activeScales[item.key].interpolate({
             inputRange: [0, 1],
